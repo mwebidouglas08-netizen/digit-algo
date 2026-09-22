@@ -64,7 +64,7 @@ export function useAIBot(): UseAIBotReturn {
   const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
   const [dailyStats, setDailyStats] = useState<DailyStats>({
     date: new Date().toISOString().split('T')[0],
-    totalTrades: 0, wins: 0, losses: 0, totalProfit: 0, totalLoss: 0, netPnl: 0,
+    totalTrades: 0, wins: 0, losses: 0, totalProfit: 0, totalLoss: 0, netPnl: 0, dailyPnL: 0, currentStreak: 0,
   });
   const [lastAnalysis, setLastAnalysis] = useState<MarketAnalysis | null>(null);
   const [emergencyStop, setEmergencyStop] = useState(false);
