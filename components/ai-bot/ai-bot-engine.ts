@@ -188,8 +188,8 @@ const DEFAULT_CONFIG: BotConfig = {
   stopLoss: 50,
   maxTrades: 200,
   maxDailyTrades: 200,
-  minConfidence: 75,
-  confidenceThreshold: 75,
+  minConfidence: 80,
+  confidenceThreshold: 80,
   minTickInterval: 1200,
   maxConsecutiveLosses: 4,
   maxDailyLoss: 50,
@@ -205,15 +205,15 @@ const DEFAULT_CONFIG: BotConfig = {
   overUnderStrategy: false,
   overThreshold: 2,
   underThreshold: 8,
-  evenOddEnabled: true,
+  evenOddEnabled: false,
   evenStreakEnabled: false,
   oddStreakEnabled: false,
   over3Under6Enabled: true,
   streakLength: 3,
-  splitMartingaleEnabled: true,
+  splitMartingaleEnabled: false,
   splitFactor: 1,
   returnRate: 0.54,
-  tradeMode: 'all',
+  tradeMode: 'overUnder',
 };
 
 export class AIBotEngine {
@@ -688,7 +688,7 @@ export class AIBotEngine {
     if (veryLowCount >= 2 && lowCount >= 4) confidence = 92;
     else if (veryLowCount >= 2 && lowCount >= 3) confidence = 88;
     else if (lastDigit <= 1 && secondLastDigit <= 1) confidence = 88;
-    else if (lastDigit <= 2 && secondLastDigit <= 2) confidence = 78;
+    else if (lastDigit <= 2 && secondLastDigit <= 2) confidence = 82;
 
     const stake = Math.min(this.config.stake, this.config.stake);
     const recentTicks = history.slice(-10);
