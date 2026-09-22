@@ -25,6 +25,7 @@ interface UseAIBotReturn {
   stopBot: () => void;
   updateConfig: (config: Partial<BotConfig>) => void;
   processTick: (symbol: string, price: number, digitStats: DigitStats) => TradeSignal | null;
+  checkRules: (symbol: string, price: number, digitStats: DigitStats) => TradeSignal | null;
   prepareTrade: (signal: TradeSignal, balance: number) => { stake: number; willTrade: boolean; reason?: string };
   recordTradeResult: (tradeId: string, result: 'WIN' | 'LOSS', profit: number) => void;
   triggerEmergencyStop: () => void;
@@ -54,7 +55,9 @@ export function useAIBot(): UseAIBotReturn {
     symbols: [],
     markets: [],
     tradeTypes: ['DIGITDIFF', 'DIGITMATCH', 'DIGITOVER', 'DIGITUNDER'],
-    strategies: ['hotspot', 'mean_reversion', 'trend_following', 'over_under'],
+    strategies: ['over2', 'under8'],
+    over2Enabled: true,
+    under8Enabled: true,
     overUnderStrategy: true,
     overThreshold: 2,
     underThreshold: 8,
@@ -70,16 +73,13 @@ export function useAIBot(): UseAIBotReturn {
   const [emergencyStop, setEmergencyStop] = useState(false);
 
   const engineRef = useRef<AIBotEngine | null>(null);
+  const priceHistoryRef = useRef<Map<string, number[]>>(new Map());
 
   useEffect(() => {
     engineRef.current = new AIBotEngine(config);
     engineRef.current.setCallbacks({
-      onActivity: (activity) => {
-        setActivities(prev => [activity, ...prev].slice(0, 500));
-      },
-      onSignal: (signal) => {
-        setSignals(prev => [signal, ...prev].slice(0, 200));
-      },
+      onActivity: (activity) => setActivities(prev => [activity, ...prev].slice(0, 500)),
+      onSignal: (signal) => setSignals(prev => [signal, ...prev].slice(0, 200)),
     });
     return () => { engineRef.current?.stop(); };
   }, []);
@@ -113,6 +113,31 @@ export function useAIBot(): UseAIBotReturn {
       return newConfig;
     });
   }, []);
+
+  const checkRules = useCallback((symbol: string, price: number, digitStats: DigitStats): TradeSignal | null => {
+    if (!engineRef.current || !isRunning) return null;
+
+    const history = priceHistoryRef.current.get(symbol) ?? [];
+    history.push(price);
+    if (history.length > 200) history.shift();
+    priceHistoryRef.current.set(symbol, history);
+    engineRef.current.updatePriceHistory(symbol, price);
+
+    const lastDigit = parseInt(price.toFixed(2).slice(-1), 10);
+
+    if (history.length >= 2) {
+      const secondLastPrice = history[history.length - 2];
+      const secondLastDigit = parseInt(secondLastPrice.toFixed(2).slice(-1), 10);
+
+      const under8Sig = engineRef.current.checkUnder8Rule(symbol, lastDigit, secondLastDigit, digitStats);
+      if (under8Sig) { syncState(); return under8Sig; }
+
+      const over2Sig = engineRef.current.checkOver2Rule(symbol, lastDigit, secondLastDigit, digitStats);
+      if (over2Sig) { syncState(); return over2Sig; }
+    }
+
+    return null;
+  }, [isRunning, syncState]);
 
   const processTick = useCallback((symbol: string, price: number, digitStats: DigitStats): TradeSignal | null => {
     if (!engineRef.current || !isRunning) return null;
@@ -156,7 +181,7 @@ export function useAIBot(): UseAIBotReturn {
   return {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
     lastAnalysis, emergencyStop,
-    startBot, stopBot, updateConfig, processTick, prepareTrade,
+    startBot, stopBot, updateConfig, processTick, checkRules, prepareTrade,
     recordTradeResult, triggerEmergencyStop, resetEmergencyStop,
     clearActivities, clearSignals,
   };

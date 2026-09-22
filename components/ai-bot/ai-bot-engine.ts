@@ -3,7 +3,6 @@
 import type { DigitStats, ContractMode } from '@/lib/types';
 
 export type SignalType = 'STRONG_BUY' | 'BUY' | 'NEUTRAL' | 'WAIT' | 'SELL' | 'STRONG_SELL';
-
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME';
 
 export interface TradeSignal {
@@ -71,7 +70,6 @@ export interface DailyStats {
 export interface BotConfig {
   enabled: boolean;
   autoTrade: boolean;
-
   stake: number;
   targetProfit: number;
   stopLoss: number;
@@ -84,12 +82,13 @@ export interface BotConfig {
   maxDailyLoss: number;
   maxDailyProfit: number;
   duration: number;
-
   scanInterval: number;
   symbols: string[];
   markets: string[];
   tradeTypes: ContractMode[];
   strategies: string[];
+  over2Enabled: boolean;
+  under8Enabled: boolean;
   overUnderStrategy: boolean;
   overThreshold: number;
   underThreshold: number;
@@ -162,7 +161,9 @@ const DEFAULT_CONFIG: BotConfig = {
   symbols: [],
   markets: [],
   tradeTypes: ['DIGITDIFF', 'DIGITMATCH', 'DIGITOVER', 'DIGITUNDER'],
-  strategies: ['hotspot', 'mean_reversion', 'trend_following', 'over_under'],
+  strategies: ['over2', 'under8'],
+  over2Enabled: true,
+  under8Enabled: true,
   overUnderStrategy: true,
   overThreshold: 2,
   underThreshold: 8,
@@ -190,14 +191,9 @@ export class AIBotEngine {
   private getEmptyDailyStats(): DailyStats {
     return {
       date: new Date().toISOString().split('T')[0],
-      totalTrades: 0,
-      wins: 0,
-      losses: 0,
-      totalProfit: 0,
-      totalLoss: 0,
-      netPnl: 0,
-      dailyPnL: 0,
-      currentStreak: 0,
+      totalTrades: 0, wins: 0, losses: 0,
+      totalProfit: 0, totalLoss: 0, netPnl: 0,
+      dailyPnL: 0, currentStreak: 0,
     };
   }
 
@@ -226,66 +222,36 @@ export class AIBotEngine {
     if (updates.symbols !== undefined) this.config.markets = updates.symbols;
   }
 
-  getConfig(): BotConfig {
-    return { ...this.config };
-  }
-
-  getActivities(): BotActivity[] {
-    return [...this.activities];
-  }
-
-  getSignals(): TradeSignal[] {
-    return [...this.signals];
-  }
-
-  getTradeHistory(): TradeRecord[] {
-    return [...this.tradeHistory];
-  }
-
-  getDailyStats(): DailyStats {
-    this.resetDailyIfNeeded();
-    return { ...this.dailyStats };
-  }
-
-  getEmergencyStop(): boolean {
-    return this.emergencyStop;
-  }
+  getConfig(): BotConfig { return { ...this.config }; }
+  getActivities(): BotActivity[] { return [...this.activities]; }
+  getSignals(): TradeSignal[] { return [...this.signals]; }
+  getTradeHistory(): TradeRecord[] { return [...this.tradeHistory]; }
+  getDailyStats(): DailyStats { this.resetDailyIfNeeded(); return { ...this.dailyStats }; }
+  getEmergencyStop(): boolean { return this.emergencyStop; }
 
   triggerEmergencyStop() {
     this.emergencyStop = true;
     this.config.autoTrade = false;
-    this.addActivity({
-      type: 'WARNING',
-      message: 'EMERGENCY STOP activated. All auto-trading halted immediately.',
-    });
+    this.addActivity({ type: 'WARNING', message: 'EMERGENCY STOP activated. All auto-trading halted.' });
   }
 
   resetEmergencyStop() {
     this.emergencyStop = false;
     this.consecutiveLosses = 0;
-    this.addActivity({
-      type: 'INFO',
-      message: 'Emergency stop reset. Bot can resume trading.',
-    });
+    this.addActivity({ type: 'INFO', message: 'Emergency stop reset. Bot can resume.' });
   }
 
   private addActivity(activity: Omit<BotActivity, 'id' | 'timestamp'>) {
-    const fullActivity: BotActivity = {
-      ...activity,
-      id: generateId(),
-      timestamp: Date.now(),
-    };
-    this.activities = [fullActivity, ...this.activities].slice(0, 500);
-    this.onActivity?.(fullActivity);
+    const full: BotActivity = { ...activity, id: generateId(), timestamp: Date.now() };
+    this.activities = [full, ...this.activities].slice(0, 500);
+    this.onActivity?.(full);
   }
 
   updatePriceHistory(symbol: string, price: number) {
-    const history = this.priceHistory.get(symbol) ?? [];
-    history.push(price);
-    if (history.length > 1000) {
-      history.shift();
-    }
-    this.priceHistory.set(symbol, history);
+    const h = this.priceHistory.get(symbol) ?? [];
+    h.push(price);
+    if (h.length > 1000) h.shift();
+    this.priceHistory.set(symbol, h);
   }
 
   start(symbols: string[]) {
@@ -298,7 +264,6 @@ export class AIBotEngine {
     this.addActivity({
       type: 'INFO',
       message: `AI Bot started. Monitoring ${symbols.length} symbols: ${symbols.join(', ')}`,
-      details: { symbols },
     });
   }
 
@@ -306,96 +271,137 @@ export class AIBotEngine {
     this.config.enabled = false;
     this.addActivity({
       type: 'INFO',
-      message: `AI Bot stopped. Daily stats: ${this.dailyStats.totalTrades} trades, PnL: $${this.dailyStats.netPnl.toFixed(2)}`,
+      message: `AI Bot stopped. Stats: ${this.dailyStats.totalTrades} trades, PnL: $${this.dailyStats.netPnl.toFixed(2)}`,
     });
   }
 
   recordTradeResult(tradeId: string, result: 'WIN' | 'LOSS', profit: number) {
     const trade = this.tradeHistory.find(t => t.id === tradeId);
-    if (trade) {
-      trade.result = result;
-      trade.profit = profit;
-    }
+    if (trade) { trade.result = result; trade.profit = profit; }
     this.resetDailyIfNeeded();
     this.dailyStats.totalTrades++;
     if (result === 'WIN') {
       this.dailyStats.wins++;
       this.dailyStats.totalProfit += profit;
       this.consecutiveLosses = 0;
-      if (this.dailyStats.currentStreak >= 0) {
-        this.dailyStats.currentStreak++;
-      } else {
-        this.dailyStats.currentStreak = 1;
-      }
+      this.dailyStats.currentStreak = this.dailyStats.currentStreak >= 0 ? this.dailyStats.currentStreak + 1 : 1;
     } else {
       this.dailyStats.losses++;
       this.dailyStats.totalLoss += Math.abs(profit);
       this.consecutiveLosses++;
-      if (this.dailyStats.currentStreak <= 0) {
-        this.dailyStats.currentStreak--;
-      } else {
-        this.dailyStats.currentStreak = -1;
-      }
+      this.dailyStats.currentStreak = this.dailyStats.currentStreak <= 0 ? this.dailyStats.currentStreak - 1 : -1;
     }
     this.dailyStats.netPnl = this.dailyStats.totalProfit - this.dailyStats.totalLoss;
     this.dailyStats.dailyPnL = this.dailyStats.netPnl;
 
     this.addActivity({
       type: 'RESULT',
-      message: `Trade ${result}: $${profit.toFixed(2)} | Consecutive losses: ${this.consecutiveLosses} | Daily PnL: $${this.dailyStats.netPnl.toFixed(2)}`,
+      message: `Trade ${result}: $${profit.toFixed(2)} | Streak: ${this.dailyStats.currentStreak} | Daily PnL: $${this.dailyStats.netPnl.toFixed(2)}`,
     });
 
     if (this.consecutiveLosses >= this.config.maxConsecutiveLosses) {
       this.config.autoTrade = false;
-      this.addActivity({
-        type: 'WARNING',
-        message: `Auto-trade PAUSED: ${this.consecutiveLosses} consecutive losses reached limit (${this.config.maxConsecutiveLosses}).`,
-      });
+      this.addActivity({ type: 'WARNING', message: `Auto-trade PAUSED: ${this.consecutiveLosses} consecutive losses.` });
     }
     if (this.dailyStats.netPnl <= -this.config.maxDailyLoss) {
       this.config.autoTrade = false;
-      this.addActivity({
-        type: 'WARNING',
-        message: `Auto-trade PAUSED: Daily loss limit $${this.config.maxDailyLoss} reached. Current loss: $${Math.abs(this.dailyStats.netPnl).toFixed(2)}`,
-      });
+      this.addActivity({ type: 'WARNING', message: `Auto-trade PAUSED: Daily loss limit $${this.config.maxDailyLoss} reached.` });
     }
     if (this.dailyStats.netPnl >= this.config.maxDailyProfit) {
       this.config.autoTrade = false;
-      this.addActivity({
-        type: 'INFO',
-        message: `Auto-trade PAUSED: Daily profit target $${this.config.maxDailyProfit} reached! Current profit: $${this.dailyStats.netPnl.toFixed(2)}`,
-      });
+      this.addActivity({ type: 'INFO', message: `Auto-trade PAUSED: Daily profit target $${this.config.maxDailyProfit} reached!` });
     }
   }
 
   canTrade(): { allowed: boolean; reason?: string } {
-    if (this.emergencyStop) return { allowed: false, reason: 'Emergency stop is active' };
-    if (!this.config.autoTrade) return { allowed: false, reason: 'Auto-trade is disabled' };
-    if (!this.config.enabled) return { allowed: false, reason: 'Bot is not running' };
-
-    const now = Date.now();
-    if (now - this.lastTradeTime < this.config.minTickInterval) {
-      return { allowed: false, reason: 'Cooldown period active' };
-    }
-
-    const totalTrades = this.dailyStats.totalTrades;
-    if (totalTrades >= this.config.maxTrades) {
-      return { allowed: false, reason: `Max daily trades (${this.config.maxTrades}) reached` };
-    }
-
-    if (this.consecutiveLosses >= this.config.maxConsecutiveLosses) {
-      return { allowed: false, reason: `Max consecutive losses (${this.config.maxConsecutiveLosses}) reached` };
-    }
-
-    if (this.dailyStats.netPnl <= -this.config.maxDailyLoss) {
-      return { allowed: false, reason: 'Daily loss limit reached' };
-    }
-
-    if (this.dailyStats.netPnl >= this.config.maxDailyProfit) {
-      return { allowed: false, reason: 'Daily profit target reached' };
-    }
-
+    if (this.emergencyStop) return { allowed: false, reason: 'Emergency stop active' };
+    if (!this.config.autoTrade) return { allowed: false, reason: 'Auto-trade disabled' };
+    if (!this.config.enabled) return { allowed: false, reason: 'Bot not running' };
+    if (Date.now() - this.lastTradeTime < this.config.minTickInterval) return { allowed: false, reason: 'Cooldown active' };
+    if (this.dailyStats.totalTrades >= this.config.maxTrades) return { allowed: false, reason: 'Max daily trades reached' };
+    if (this.consecutiveLosses >= this.config.maxConsecutiveLosses) return { allowed: false, reason: 'Max consecutive losses reached' };
+    if (this.dailyStats.netPnl <= -this.config.maxDailyLoss) return { allowed: false, reason: 'Daily loss limit reached' };
+    if (this.dailyStats.netPnl >= this.config.maxDailyProfit) return { allowed: false, reason: 'Daily profit target reached' };
     return { allowed: true };
+  }
+
+  checkOver2Rule(symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats): TradeSignal | null {
+    if (!this.config.over2Enabled) return null;
+    if (lastDigit > 2 || secondLastDigit > 2) return null;
+
+    const confidence = 85;
+    const stake = Math.min(this.config.stake, this.config.stake);
+    const recentTicks = this.priceHistory.get(symbol)?.slice(-10) ?? [];
+    const reasons = [`Over 2: Last two digits are ${secondLastDigit} then ${lastDigit} (both ≤ 2)`];
+
+    const signal: TradeSignal = {
+      id: generateId(),
+      timestamp: Date.now(),
+      symbol,
+      signalType: 'STRONG_BUY',
+      confidence,
+      contractMode: 'DIGITOVER',
+      predictedDigit: this.config.overThreshold,
+      direction: `Over ${this.config.overThreshold}`,
+      currentTick: recentTicks[recentTicks.length - 1] ?? 0,
+      recentTicks,
+      reasoning: reasons,
+      indicators: [{ name: 'Over 2 Rule', value: `${secondLastDigit}, ${lastDigit}`, bullish: true }],
+      riskLevel: 'LOW',
+      recommendedStake: stake,
+      reasonForEntry: reasons[0],
+      marketCondition: 'Rule-based Over 2',
+      type: 'DIGITOVER',
+    };
+
+    this.signals = [signal, ...this.signals].slice(0, 200);
+    this.onSignal?.(signal);
+    this.addActivity({ type: 'SIGNAL', message: `${symbol}: OVER 2 | Digit ${lastDigit} after ${secondLastDigit} | ${confidence}% confidence` });
+    return signal;
+  }
+
+  checkUnder8Rule(symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats): TradeSignal | null {
+    if (!this.config.under8Enabled) return null;
+    if (lastDigit < 8 || secondLastDigit < 8) return null;
+
+    const digit8Pct = digitStats.percentages[8] ?? 0;
+    const digit9Pct = digitStats.percentages[9] ?? 0;
+    const combinedPct = digit8Pct + digit9Pct;
+
+    if (combinedPct >= 10) return null;
+
+    const confidence = 80 + Math.min(15, (10 - combinedPct) * 3);
+    const stake = Math.min(this.config.stake, this.config.stake);
+    const recentTicks = this.priceHistory.get(symbol)?.slice(-10) ?? [];
+    const reasons = [`Under 8: Last two digits are ${secondLastDigit} then ${lastDigit} (both ≥ 8). Combined digit 8+9 frequency: ${combinedPct.toFixed(1)}% (< 10%)`];
+
+    const signal: TradeSignal = {
+      id: generateId(),
+      timestamp: Date.now(),
+      symbol,
+      signalType: 'STRONG_BUY',
+      confidence: Math.min(95, confidence),
+      contractMode: 'DIGITUNDER',
+      predictedDigit: this.config.underThreshold,
+      direction: `Under ${this.config.underThreshold}`,
+      currentTick: recentTicks[recentTicks.length - 1] ?? 0,
+      recentTicks,
+      reasoning: reasons,
+      indicators: [
+        { name: 'Under 8 Rule', value: `${secondLastDigit}, ${lastDigit}`, bullish: true },
+        { name: 'Digit 8+9 Freq', value: `${combinedPct.toFixed(1)}%`, bullish: true },
+      ],
+      riskLevel: 'LOW',
+      recommendedStake: stake,
+      reasonForEntry: reasons[0],
+      marketCondition: 'Rule-based Under 8',
+      type: 'DIGITUNDER',
+    };
+
+    this.signals = [signal, ...this.signals].slice(0, 200);
+    this.onSignal?.(signal);
+    this.addActivity({ type: 'SIGNAL', message: `${symbol}: UNDER 8 | Digit ${lastDigit} after ${secondLastDigit} | Combined 8+9: ${combinedPct.toFixed(1)}% | ${confidence.toFixed(0)}% confidence` });
+    return signal;
   }
 
   analyzeMarket(symbol: string, digitStats: DigitStats, lastDigit: number, lastPrice: number): MarketAnalysis {
@@ -408,28 +414,14 @@ export class AIBotEngine {
     const entropy = this.calculateEntropy(digitStats);
     const zScore = this.calculateZScore(digitStats);
     const overUnderSignal = this.detectOverUnderSignal(digitStats, history);
-
     const dominantDigit = digitStats.percentages.indexOf(Math.max(...digitStats.percentages));
     const digitFrequencies: [number, number][] = digitStats.percentages.map((pct, idx) => [idx, pct]);
 
     const analysis: MarketAnalysis = {
-      symbol,
-      lastDigit,
-      lastPrice,
-      digitStats,
-      patterns,
-      streaks,
-      volatility,
-      trend,
-      chiSquare,
-      entropy,
-      zScore,
-      overUnderSignal,
-      timestamp: Date.now(),
-      dominantDigit,
-      digitFrequencies,
+      symbol, lastDigit, lastPrice, digitStats, patterns, streaks,
+      volatility, trend, chiSquare, entropy, zScore, overUnderSignal,
+      timestamp: Date.now(), dominantDigit, digitFrequencies,
     };
-
     this.lastAnalysis.set(symbol, analysis);
     return analysis;
   }
@@ -437,9 +429,7 @@ export class AIBotEngine {
   generateSignal(analysis: MarketAnalysis, balance: number): TradeSignal | null {
     const { symbol, digitStats, patterns, streaks, volatility, trend, chiSquare, entropy, zScore, overUnderSignal, lastPrice } = analysis;
 
-    if (digitStats.totalTicks < 15) {
-      return null;
-    }
+    if (digitStats.totalTicks < 10) return null;
 
     const reasons: string[] = [];
     const indicators: SignalIndicator[] = [];
@@ -449,107 +439,51 @@ export class AIBotEngine {
     let direction = 'Differs from';
 
     const avgPct = 10;
-
     const highestDigit = digitStats.percentages.indexOf(Math.max(...digitStats.percentages));
     const lowestDigit = digitStats.percentages.indexOf(Math.min(...digitStats.percentages));
     const highestPct = digitStats.percentages[highestDigit];
     const lowestPct = digitStats.percentages[lowestDigit];
 
     const deviation = Math.sqrt(digitStats.percentages.reduce((sum, p) => sum + Math.pow(p - avgPct, 2), 0) / 10);
-    indicators.push({
-      name: 'Digit Deviation',
-      value: `${deviation.toFixed(1)}% from uniform`,
-      bullish: deviation > 2,
-    });
-    if (deviation > 2) {
-      confidence += 8;
-      reasons.push(`High digit deviation (${deviation.toFixed(1)}%) from uniform distribution`);
-    }
+    indicators.push({ name: 'Digit Deviation', value: `${deviation.toFixed(1)}%`, bullish: deviation > 2 });
+    if (deviation > 2) { confidence += 8; reasons.push(`Digit deviation ${deviation.toFixed(1)}%`); }
 
-    if (chiSquare > 12) {
-      confidence += 10;
-      indicators.push({ name: 'Chi-Square', value: chiSquare.toFixed(1), bullish: true });
-      reasons.push(`Chi-square test shows significant digit non-uniformity (χ²=${chiSquare.toFixed(1)})`);
-    } else {
-      indicators.push({ name: 'Chi-Square', value: chiSquare.toFixed(1), bullish: false });
-    }
+    if (chiSquare > 12) { confidence += 10; indicators.push({ name: 'Chi-Square', value: chiSquare.toFixed(1), bullish: true }); reasons.push(`χ²=${chiSquare.toFixed(1)}`); }
+    else indicators.push({ name: 'Chi-Square', value: chiSquare.toFixed(1), bullish: false });
 
-    if (entropy < 3.2) {
-      confidence += 8;
-      indicators.push({ name: 'Entropy', value: entropy.toFixed(2), bullish: true });
-      reasons.push(`Low entropy (${entropy.toFixed(2)}) indicates non-random digit distribution`);
-    } else {
-      indicators.push({ name: 'Entropy', value: entropy.toFixed(2), bullish: false });
-    }
+    if (entropy < 3.2) { confidence += 8; indicators.push({ name: 'Entropy', value: entropy.toFixed(2), bullish: true }); reasons.push(`Low entropy ${entropy.toFixed(2)}`); }
+    else indicators.push({ name: 'Entropy', value: entropy.toFixed(2), bullish: false });
 
-    if (Math.abs(zScore) > 1.5) {
-      confidence += 7;
-      indicators.push({ name: 'Z-Score', value: zScore.toFixed(2), bullish: Math.abs(zScore) > 1.5 });
-      reasons.push(`Z-score of ${zScore.toFixed(2)} indicates statistically significant deviation`);
-    } else {
-      indicators.push({ name: 'Z-Score', value: zScore.toFixed(2), bullish: false });
-    }
+    if (Math.abs(zScore) > 1.5) { confidence += 7; indicators.push({ name: 'Z-Score', value: zScore.toFixed(2), bullish: true }); reasons.push(`Z-score ${zScore.toFixed(2)}`); }
+    else indicators.push({ name: 'Z-Score', value: zScore.toFixed(2), bullish: false });
 
-    for (const pattern of patterns) {
-      if (pattern.confidence > 50) {
-        confidence += pattern.confidence * 0.12;
-        reasons.push(pattern.description);
-        if (pattern.predictedNext !== undefined) {
-          predictedDigit = pattern.predictedNext;
-        }
-      }
+    for (const p of patterns) {
+      if (p.confidence > 50) { confidence += p.confidence * 0.12; reasons.push(p.description); if (p.predictedNext !== undefined) predictedDigit = p.predictedNext; }
     }
 
     if (streaks.streakLength >= 3 && streaks.isBreaking) {
-      confidence += 10;
-      reasons.push(`${streaks.streakLength}-digit streak of ${streaks.currentDigit} detected, reversal likely`);
+      confidence += 10; reasons.push(`${streaks.streakLength}x ${streaks.currentDigit} streak breaking`);
       indicators.push({ name: 'Streak Break', value: `${streaks.streakLength}x ${streaks.currentDigit}`, bullish: true });
     }
 
-    indicators.push({
-      name: 'Volatility',
-      value: volatility.toFixed(4),
-      bullish: volatility > 0.001 && volatility < 0.01,
-    });
-    if (volatility > 0.01) {
-      confidence -= 5;
-      reasons.push('High price volatility detected - caution advised');
-    } else if (volatility < 0.001) {
-      confidence += 4;
-      reasons.push('Low volatility - stable pattern');
-    }
+    if (volatility > 0.01) { confidence -= 5; } else if (volatility < 0.001) { confidence += 4; }
+    indicators.push({ name: 'Volatility', value: volatility.toFixed(4), bullish: volatility > 0.001 && volatility < 0.01 });
 
-    indicators.push({
-      name: 'Trend',
-      value: `${trend.direction} (${trend.strength.toFixed(0)}%)`,
-      bullish: trend.direction === 'SIDEWAYS',
-    });
-    if (trend.strength > 70 && trend.direction !== 'SIDEWAYS') {
-      confidence -= 3;
-      reasons.push(`Strong ${trend.direction.toLowerCase()} trend - may affect digit distribution`);
-    }
+    if (trend.strength > 70 && trend.direction !== 'SIDEWAYS') { confidence -= 3; }
+    indicators.push({ name: 'Trend', value: `${trend.direction} (${trend.strength.toFixed(0)}%)`, bullish: trend.direction === 'SIDEWAYS' });
 
     if (this.config.overUnderStrategy && overUnderSignal) {
       confidence += overUnderSignal.confidence * 0.3;
       contractMode = overUnderSignal.type === 'OVER_2' ? 'DIGITOVER' : 'DIGITUNDER';
       direction = overUnderSignal.type === 'OVER_2' ? `Over ${this.config.overThreshold}` : `Under ${this.config.underThreshold}`;
       reasons.push(overUnderSignal.reason);
-      indicators.push({
-        name: overUnderSignal.type === 'OVER_2' ? 'Over Strategy' : 'Under Strategy',
-        value: `${overUnderSignal.confidence.toFixed(0)}% conf`,
-        bullish: true,
-      });
+      indicators.push({ name: overUnderSignal.type === 'OVER_2' ? 'Over' : 'Under', value: `${overUnderSignal.confidence.toFixed(0)}%`, bullish: true });
     } else if (highestPct > 12) {
-      contractMode = 'DIGITMATCH';
-      predictedDigit = highestDigit;
-      direction = `Match ${highestDigit}`;
-      confidence += 8;
-      reasons.push(`Digit ${highestDigit} over-represented at ${highestPct.toFixed(1)}%`);
+      contractMode = 'DIGITMATCH'; predictedDigit = highestDigit; direction = `Match ${highestDigit}`;
+      confidence += 8; reasons.push(`Digit ${highestDigit} at ${highestPct.toFixed(1)}%`);
     } else if (lowestPct < 8) {
-      contractMode = 'DIGITDIFF';
-      direction = `Differ from ${lowestDigit}`;
-      confidence += 6;
-      reasons.push(`Digit ${lowestDigit} under-represented at ${lowestPct.toFixed(1)}%`);
+      contractMode = 'DIGITDIFF'; direction = `Differ from ${lowestDigit}`;
+      confidence += 6; reasons.push(`Digit ${lowestDigit} at ${lowestPct.toFixed(1)}%`);
     }
 
     let riskLevel: RiskLevel = 'MEDIUM';
@@ -559,97 +493,50 @@ export class AIBotEngine {
     else riskLevel = 'EXTREME';
 
     let signalType: SignalType;
-    if (confidence >= this.config.minConfidence && confidence >= 55) {
-      signalType = confidence >= 75 ? 'STRONG_BUY' : 'BUY';
-    } else if (confidence >= 45) {
-      signalType = 'WAIT';
-    } else {
-      signalType = 'SELL';
-    }
+    if (confidence >= this.config.minConfidence && confidence >= 55) signalType = confidence >= 75 ? 'STRONG_BUY' : 'BUY';
+    else if (confidence >= 45) signalType = 'WAIT';
+    else signalType = 'SELL';
 
-    if (signalType === 'WAIT' || signalType === 'SELL') {
-      this.addActivity({
-        type: 'ANALYSIS',
-        message: `${symbol}: ${signalType} - Confidence ${confidence.toFixed(1)}% (min: ${this.config.minConfidence}%)`,
-      });
-      return null;
-    }
+    if (signalType === 'WAIT' || signalType === 'SELL') return null;
 
     const stake = Math.min(this.config.stake, balance * 0.05);
     const recentTicks = this.priceHistory.get(symbol)?.slice(-10) ?? [];
 
     const signal: TradeSignal = {
-      id: generateId(),
-      timestamp: Date.now(),
-      symbol,
-      signalType,
-      confidence: Math.min(95, Math.max(0, confidence)),
-      contractMode,
-      predictedDigit,
-      direction,
-      currentTick: lastPrice,
-      recentTicks,
-      reasoning: reasons,
-      indicators,
-      riskLevel,
-      recommendedStake: stake,
-      reasonForEntry: reasons[0] || 'Statistical edge detected',
-      marketCondition: `${trend.direction} ${volatility.toFixed(4)} Vol`,
-      type: contractMode,
+      id: generateId(), timestamp: Date.now(), symbol, signalType,
+      confidence: Math.min(95, Math.max(0, confidence)), contractMode, predictedDigit,
+      direction, currentTick: lastPrice, recentTicks, reasoning: reasons, indicators,
+      riskLevel, recommendedStake: stake, reasonForEntry: reasons[0] || 'Statistical edge',
+      marketCondition: `${trend.direction} ${volatility.toFixed(4)} Vol`, type: contractMode,
     };
 
     this.signals = [signal, ...this.signals].slice(0, 200);
     this.onSignal?.(signal);
-
-    this.addActivity({
-      type: 'SIGNAL',
-      message: `${symbol}: ${signalType} | ${contractMode} | ${confidence.toFixed(1)}% confidence | ${riskLevel} risk`,
-    });
-
+    this.addActivity({ type: 'SIGNAL', message: `${symbol}: ${signalType} | ${contractMode} | ${confidence.toFixed(1)}% | ${riskLevel}` });
     return signal;
   }
 
   prepareTrade(signal: TradeSignal, balance: number): { stake: number; willTrade: boolean; reason?: string } {
     const check = this.canTrade();
     if (!check.allowed) {
-      this.addActivity({
-        type: 'INFO',
-        message: `Trade REJECTED for ${signal.symbol}: ${check.reason}`,
-      });
+      this.addActivity({ type: 'INFO', message: `Trade REJECTED: ${check.reason}` });
       return { stake: 0, willTrade: false, reason: check.reason };
     }
-
     if (signal.confidence < this.config.minConfidence) {
       return { stake: 0, willTrade: false, reason: `Confidence ${signal.confidence.toFixed(1)}% below threshold` };
     }
-
     const stake = Math.min(signal.recommendedStake, this.config.stake, balance * 0.05);
-    if (stake < 1) {
-      return { stake: 0, willTrade: false, reason: 'Insufficient balance' };
-    }
+    if (stake < 1) return { stake: 0, willTrade: false, reason: 'Insufficient balance' };
 
     this.lastTradeTime = Date.now();
     const tradeRecord: TradeRecord = {
-      id: signal.id,
-      timestamp: Date.now(),
-      symbol: signal.symbol,
-      contractMode: signal.contractMode,
-      signalConfidence: signal.confidence,
-      stake,
-      result: 'PENDING',
-      profit: 0,
-      reason: signal.reasonForEntry,
-      signalType: signal.signalType,
-      riskLevel: signal.riskLevel,
-      digit: signal.predictedDigit,
+      id: signal.id, timestamp: Date.now(), symbol: signal.symbol,
+      contractMode: signal.contractMode, signalConfidence: signal.confidence,
+      stake, result: 'PENDING', profit: 0, reason: signal.reasonForEntry,
+      signalType: signal.signalType, riskLevel: signal.riskLevel, digit: signal.predictedDigit,
     };
     this.tradeHistory = [tradeRecord, ...this.tradeHistory].slice(0, 500);
-
-    this.addActivity({
-      type: 'TRADE',
-      message: `EXECUTING ${signal.contractMode} on ${signal.symbol} | Stake: $${stake.toFixed(2)} | Confidence: ${signal.confidence.toFixed(1)}%`,
-    });
-
+    this.addActivity({ type: 'TRADE', message: `EXECUTING ${signal.contractMode} on ${signal.symbol} | $${stake.toFixed(2)} | ${signal.confidence.toFixed(1)}%` });
     return { stake, willTrade: true };
   }
 
@@ -668,9 +555,7 @@ export class AIBotEngine {
     let entropy = 0;
     for (let i = 0; i < 10; i++) {
       const p = stats.percentages[i] / 100;
-      if (p > 0) {
-        entropy -= p * Math.log2(p);
-      }
+      if (p > 0) entropy -= p * Math.log2(p);
     }
     return entropy;
   }
@@ -678,143 +563,59 @@ export class AIBotEngine {
   private calculateZScore(stats: DigitStats): number {
     if (stats.totalTicks < 10) return 0;
     const expected = 10;
-    const maxDeviation = Math.max(
-      ...stats.percentages.map(p => Math.abs(p - expected))
-    );
+    const maxDeviation = Math.max(...stats.percentages.map(p => Math.abs(p - expected)));
     const se = Math.sqrt((expected * (100 - expected)) / stats.totalTicks);
     return se > 0 ? maxDeviation / se : 0;
   }
 
-  private detectOverUnderSignal(stats: DigitStats, history: number[]): OverUnderSignal | null {
-    if (stats.totalTicks < 20 || !this.config.overUnderStrategy) return null;
-
+  private detectOverUnderSignal(stats: DigitStats, _history: number[]): OverUnderSignal | null {
+    if (stats.totalTicks < 10 || !this.config.overUnderStrategy) return null;
     const overCount = stats.counts.slice(this.config.overThreshold + 1).reduce((a, b) => a + b, 0);
     const overPct = (overCount / stats.totalTicks) * 100;
-
     const underCount = stats.counts.slice(0, this.config.underThreshold).reduce((a, b) => a + b, 0);
     const underPct = (underCount / stats.totalTicks) * 100;
-
     const expectedOver = (10 - this.config.overThreshold) * 10;
     const expectedUnder = this.config.underThreshold * 10;
 
     if (overPct > expectedOver + 3) {
-      return {
-        type: 'OVER_2',
-        confidence: Math.min(85, 55 + (overPct - expectedOver)),
-        digitFrequency: overPct,
-        reason: `Digit >${this.config.overThreshold} appears ${overPct.toFixed(1)}% (expected ${expectedOver}%) — OVER ${this.config.overThreshold} strategy`,
-      };
+      return { type: 'OVER_2', confidence: Math.min(85, 55 + (overPct - expectedOver)), digitFrequency: overPct, reason: `Digit >${this.config.overThreshold} at ${overPct.toFixed(1)}% (expected ${expectedOver}%)` };
     }
-
     if (underPct > expectedUnder + 3) {
-      return {
-        type: 'UNDER_8',
-        confidence: Math.min(85, 55 + (underPct - expectedUnder)),
-        digitFrequency: underPct,
-        reason: `Digit <${this.config.underThreshold} appears ${underPct.toFixed(1)}% (expected ${expectedUnder}%) — UNDER ${this.config.underThreshold} strategy`,
-      };
+      return { type: 'UNDER_8', confidence: Math.min(85, 55 + (underPct - expectedUnder)), digitFrequency: underPct, reason: `Digit <${this.config.underThreshold} at ${underPct.toFixed(1)}% (expected ${expectedUnder}%)` };
     }
-
     return null;
   }
 
   private detectPatterns(history: number[], stats: DigitStats): PatternResult[] {
     const patterns: PatternResult[] = [];
-    if (history.length < 30) return patterns;
-
-    const digitSequence = history.slice(-30).map(p => {
-      const str = p.toFixed(2);
-      return parseInt(str[str.length - 1], 10);
-    });
-
+    if (history.length < 10) return patterns;
+    const digitSequence = history.slice(-30).map(p => parseInt(p.toFixed(2).slice(-1), 10));
     const consecutive = this.findConsecutivePattern(digitSequence);
-    if (consecutive) {
-      patterns.push({ type: 'CONSECUTIVE', confidence: 65, description: consecutive.description, predictedNext: consecutive.predicted });
-    }
-
-    const alternating = this.findAlternatingPattern(digitSequence);
-    if (alternating) {
-      patterns.push({ type: 'ALTERNATING', confidence: 60, description: alternating.description });
-    }
-
-    const cyclic = this.findCyclicPattern(digitSequence);
-    if (cyclic) {
-      patterns.push({ type: 'CYCLIC', confidence: 70, description: cyclic.description, predictedNext: cyclic.predicted });
-    }
-
+    if (consecutive) patterns.push({ type: 'CONSECUTIVE', confidence: 65, description: consecutive.description, predictedNext: consecutive.predicted });
     const hotCold = this.findHotColdDigits(stats);
-    if (hotCold) {
-      patterns.push({ type: 'HOTSPOT', confidence: 60, description: hotCold.description, predictedNext: hotCold.predicted });
-    }
-
-    const overdue = this.findOverdueDigits(stats);
-    if (overdue) {
-      patterns.push({ type: 'OVERDUE', confidence: 55, description: overdue.description, predictedNext: overdue.predicted });
-    }
-
+    if (hotCold) patterns.push({ type: 'HOTSPOT', confidence: 60, description: hotCold.description, predictedNext: hotCold.predicted });
     return patterns;
   }
 
   private findConsecutivePattern(seq: number[]): { description: string; predicted?: number } | null {
-    if (seq.length < 5) return null;
+    if (seq.length < 3) return null;
     let maxRun = 1, currentRun = 1, runDigit = seq[0];
     for (let i = 1; i < seq.length; i++) {
-      if (seq[i] === seq[i - 1]) {
-        currentRun++;
-        if (currentRun > maxRun) { maxRun = currentRun; runDigit = seq[i]; }
-      } else { currentRun = 1; }
+      if (seq[i] === seq[i - 1]) { currentRun++; if (currentRun > maxRun) { maxRun = currentRun; runDigit = seq[i]; } }
+      else currentRun = 1;
     }
-    return maxRun >= 2 ? { description: `${maxRun} consecutive ${runDigit}s detected`, predicted: runDigit } : null;
-  }
-
-  private findAlternatingPattern(seq: number[]): { description: string } | null {
-    if (seq.length < 6) return null;
-    let count = 0;
-    for (let i = 2; i < Math.min(10, seq.length); i++) {
-      if (seq[i] === seq[i - 2]) count++;
-    }
-    return count >= 3 ? { description: 'Alternating digit pattern detected' } : null;
-  }
-
-  private findCyclicPattern(seq: number[]): { description: string; predicted?: number } | null {
-    if (seq.length < 15) return null;
-    for (let cycleLen = 2; cycleLen <= 5; cycleLen++) {
-      let matches = 0;
-      const total = Math.floor((seq.length - cycleLen) / cycleLen);
-      for (let i = 0; i < total; i++) {
-        const pos = seq.length - 1 - (i + 1) * cycleLen;
-        if (pos >= 0 && seq[pos] === seq[pos + cycleLen]) matches++;
-      }
-      if (total > 0 && matches / total > 0.7) {
-        return { description: `Cyclic pattern with period ${cycleLen}`, predicted: seq[seq.length - cycleLen] };
-      }
-    }
-    return null;
+    return maxRun >= 2 ? { description: `${maxRun}x consecutive ${runDigit}`, predicted: runDigit } : null;
   }
 
   private findHotColdDigits(stats: DigitStats): { description: string; predicted?: number } | null {
-    if (stats.totalTicks < 20) return null;
+    if (stats.totalTicks < 10) return null;
     const hot: number[] = [], cold: number[] = [];
     for (let i = 0; i < 10; i++) {
       if (stats.percentages[i] > 12) hot.push(i);
       else if (stats.percentages[i] < 8) cold.push(i);
     }
-    if (hot.length > 0) return { description: `Hot digits: ${hot.join(', ')}`, predicted: hot[0] };
-    if (cold.length > 0) return { description: `Cold digits (overdue): ${cold.join(', ')}`, predicted: cold[0] };
-    return null;
-  }
-
-  private findOverdueDigits(stats: DigitStats): { description: string; predicted?: number } | null {
-    if (stats.totalTicks < 20) return null;
-    const overdue: { digit: number; deficit: number }[] = [];
-    for (let i = 0; i < 10; i++) {
-      const deficit = 10 - stats.percentages[i];
-      if (deficit > 2) overdue.push({ digit: i, deficit });
-    }
-    if (overdue.length > 0) {
-      overdue.sort((a, b) => b.deficit - a.deficit);
-      return { description: `Overdue digits: ${overdue.map(d => d.digit).join(', ')}`, predicted: overdue[0].digit };
-    }
+    if (hot.length > 0) return { description: `Hot: ${hot.join(', ')}`, predicted: hot[0] };
+    if (cold.length > 0) return { description: `Cold: ${cold.join(', ')}`, predicted: cold[0] };
     return null;
   }
 
@@ -827,17 +628,13 @@ export class AIBotEngine {
     let currentRun = 1;
     for (let i = history.length - 2; i >= 0; i--) {
       const d = parseInt(history[i].toFixed(2).slice(-1), 10);
-      if (d === lastDigit && i >= history.length - 1 - streakLength) {
-        streakLength++;
-      }
+      if (d === lastDigit && i >= history.length - 1 - streakLength) streakLength++;
       if (i > 0) {
         const prev = parseInt(history[i - 1].toFixed(2).slice(-1), 10);
-        if (d === prev) { currentRun++; longestStreak = Math.max(longestStreak, currentRun); }
-        else { currentRun = 1; }
+        if (d === prev) { currentRun++; longestStreak = Math.max(longestStreak, currentRun); } else currentRun = 1;
       }
     }
-    const isBreaking = history.length >= 2 &&
-      parseInt(history[history.length - 2].toFixed(2).slice(-1), 10) !== lastDigit && streakLength === 1;
+    const isBreaking = history.length >= 2 && parseInt(history[history.length - 2].toFixed(2).slice(-1), 10) !== lastDigit && streakLength === 1;
     return { currentDigit: lastDigit, streakLength, isBreaking, longestStreak };
   }
 
@@ -845,9 +642,7 @@ export class AIBotEngine {
     if (history.length < 10) return 0;
     const recent = history.slice(-30);
     const changes: number[] = [];
-    for (let i = 1; i < recent.length; i++) {
-      changes.push(Math.abs(recent[i] - recent[i - 1]));
-    }
+    for (let i = 1; i < recent.length; i++) changes.push(Math.abs(recent[i] - recent[i - 1]));
     return changes.length > 0 ? changes.reduce((a, b) => a + b, 0) / changes.length : 0;
   }
 

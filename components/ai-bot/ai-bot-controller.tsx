@@ -36,14 +36,16 @@ export function AIBotController({
 }: AIBotControllerProps) {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [tickCount, setTickCount] = useState(0);
+  const [lastSignalTime, setLastSignalTime] = useState(0);
   const { ws } = useDerivWSContext();
   const allTicksRef = useRef<Map<string, number[]>>(new Map());
   const subscriptionsRef = useRef<Map<string, () => void>>(new Map());
+  const buyCooldownRef = useRef(false);
 
   const {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
     lastAnalysis, emergencyStop,
-    startBot, stopBot, updateConfig, processTick, prepareTrade,
+    startBot, stopBot, updateConfig, processTick, checkRules, prepareTrade,
     triggerEmergencyStop, resetEmergencyStop,
   } = useAIBot();
 
@@ -55,39 +57,47 @@ export function AIBotController({
     startBot(finalSymbols);
   }, [symbols, startBot]);
 
-  const handleAutoBuy = useCallback(() => {
-    if (config.autoTrade) {
-      onBuy();
-    }
-  }, [config.autoTrade, onBuy]);
+  const executeAutoBuy = useCallback(() => {
+    if (buyCooldownRef.current) return;
+    buyCooldownRef.current = true;
+    onBuy();
+    setTimeout(() => { buyCooldownRef.current = false; }, 2000);
+  }, [onBuy]);
 
   useEffect(() => {
     if (!isRunning || !ws || !isConnected) return;
 
-    const processAllTicks = (symbol: string, price: number) => {
+    if (currentTick && activeSymbol) {
+      const symbol = activeSymbol.underlying_symbol;
+      const price = currentTick.quote;
+
       const ticks = allTicksRef.current.get(symbol) ?? [];
       ticks.push(price);
       if (ticks.length > 200) ticks.shift();
       allTicksRef.current.set(symbol, ticks);
-
       setTickCount(prev => prev + 1);
 
       const stats = computeDigitStats(ticks, 2);
-      const sig = processTick(symbol, price, stats);
-      if (sig && config.autoTrade) {
-        const check = prepareTrade(sig, balance);
+
+      const ruleSignal = checkRules(symbol, price, stats);
+      if (ruleSignal && config.autoTrade && !emergencyStop) {
+        const check = prepareTrade(ruleSignal, balance);
         if (check.willTrade) {
-          handleAutoBuy();
+          executeAutoBuy();
         }
       }
-    };
 
-    if (currentTick && activeSymbol) {
-      processAllTicks(activeSymbol.underlying_symbol, currentTick.quote);
+      if (!ruleSignal) {
+        const sig = processTick(symbol, price, stats);
+        if (sig && config.autoTrade && !emergencyStop) {
+          const check = prepareTrade(sig, balance);
+          if (check.willTrade) {
+            executeAutoBuy();
+          }
+        }
+      }
     }
-
-    return () => {};
-  }, [isRunning, currentTick, activeSymbol, ws, isConnected, processTick, prepareTrade, balance, config.autoTrade, handleAutoBuy]);
+  }, [isRunning, currentTick, activeSymbol, ws, isConnected, processTick, checkRules, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy]);
 
   useEffect(() => {
     if (!isRunning || !ws || !isConnected || symbols.length === 0) return;
@@ -112,9 +122,7 @@ export function AIBotController({
           allTicksRef.current.set(sym, ticks);
         }
       }).then(result => {
-        if (result.subscriptionId) {
-          subscriptionsRef.current.set(sym, result.unsubscribe);
-        }
+        if (result.subscriptionId) subscriptionsRef.current.set(sym, result.unsubscribe);
       }).catch(() => {});
     });
 
@@ -141,7 +149,7 @@ export function AIBotController({
           </span>
         )}
         <Zap className="h-4 w-4" />
-        <span className="hidden sm:inline">AI Bot</span>
+        <span>AI Bot</span>
       </Button>
 
       {isPanelOpen && (
