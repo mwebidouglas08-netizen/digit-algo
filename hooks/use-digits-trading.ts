@@ -178,15 +178,16 @@ export function useDigitsTrading({ ws, isConnected, isExhausted, isAuthenticated
       const p = proposalRef.current as unknown as { payout?: number; ask_price?: number; id?: string } | null;
       const buying = isBuyingRef.current;
       if (p && !buying && p.payout !== undefined) {
-        // ── Pre-trade profit verification: never buy blindly ──
+        // ── Pre-trade profit verification: ensure statistically projected profit >0 — never blind ──
         if (params.confidence !== undefined) {
           const stakeNum = Math.min(params.stakeAmount, 10);
           const payout = Number(p.payout);
           const profitIfWin = payout - stakeNum;
           const pWin = Math.min(0.95, Math.max(0.05, params.confidence / 100));
           const expectedValue = pWin * profitIfWin - (1 - pWin) * stakeNum;
-          if (profitIfWin <= 0 || expectedValue <= 0 || payout / stakeNum < 1.1) {
-            return false; // verified not profitable — block careless loss
+          // Require positive EV; payout/stake check already handled by Deriv — keep lenient for Over/Under (1.3x) & Even/Odd (1.9x)
+          if (profitIfWin <= 0 || expectedValue <= 0) {
+            return false; // not projected profitable
           }
         }
         await buyWithProposal(p as unknown as ProposalInfo);

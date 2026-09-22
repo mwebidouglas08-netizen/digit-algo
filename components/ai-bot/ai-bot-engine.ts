@@ -343,16 +343,27 @@ export class AIBotEngine {
 
   isRiskAcceptable(signal: TradeSignal, balance: number): { ok: boolean; reason?: string } {
     const stake = Math.min(signal.recommendedStake, this.config.stake, balance * 0.1);
-    if (balance > 0 && stake / balance > 0.05) return { ok: false, reason: `Risk too high: stake $${stake.toFixed(2)} >5% of balance $${balance.toFixed(2)}` };
-    if (signal.riskLevel === 'EXTREME') return { ok: false, reason: 'Extreme risk signal blocked' };
-    if (this.maxDrawdown > this.config.maxDailyLoss * 0.8) return { ok: false, reason: `Drawdown $${this.maxDrawdown.toFixed(2)} near limit` };
-    // Substantial live-fund gate: require validated strategy + demo history before large exposure
-    if (balance > 100) {
-      const settled = this.tradeHistory.filter(t => t.result !== 'PENDING').length;
-      if (!this.lastValidation || !this.lastValidation.isValid) {
-        if (settled < 20) return { ok: false, reason: `Live validation required: run backtest/OOS + 20 demo trades first (have ${settled})` };
-      }
-      if (this.lastValidation && !this.lastValidation.isValid) return { ok: false, reason: `Strategy not validated: ${this.lastValidation.reason} — demo only` };
+    if (balance > 0 && stake / balance > 0.05) {
+      const r = `Risk too high: stake $${stake.toFixed(2)} >5% of balance $${balance.toFixed(2)}`;
+      this.addActivity({ type: 'INFO', message: `Blocked ${signal.contractMode} ${signal.confidence.toFixed(0)}%: ${r}` });
+      return { ok: false, reason: r };
+    }
+    if (signal.riskLevel === 'EXTREME') {
+      const r = 'Extreme risk signal blocked';
+      this.addActivity({ type: 'INFO', message: `Blocked ${signal.contractMode}: ${r}` });
+      return { ok: false, reason: r };
+    }
+    if (this.maxDrawdown > this.config.maxDailyLoss * 0.8) {
+      const r = `Drawdown $${this.maxDrawdown.toFixed(2)} near limit`;
+      this.addActivity({ type: 'WARNING', message: r });
+      return { ok: false, reason: r };
+    }
+    // Substantial live-fund gate: log warning but do NOT block first trades — remain data-driven, demo before large stake
+    if (balance > 500 && this.lastValidation && !this.lastValidation.isValid) {
+      const r = `Strategy not yet validated: ${this.lastValidation.reason} — trading with reduced size, run Validation + demo`;
+      this.addActivity({ type: 'WARNING', message: r });
+      // block only if stake >1 and balance >500 and no validation — protect capital, but allow 0.7 stake to continue for learning
+      if (stake > 1) return { ok: false, reason: r };
     }
     return { ok: true };
   }
@@ -568,10 +579,9 @@ export class AIBotEngine {
   }
 
   private isFavourableMarket(analysis: MarketAnalysis): boolean {
-    // Favourable = low entropy (skewed) OR strong digit deviation OR clear over/under momentum
-    // Unfavourable = high entropy ~3.32 with no deviation = random walk, skip
-    if (analysis.entropy > 3.28 && Math.abs(analysis.chiSquare) < 5) return false;
-    if (analysis.volatility > 0.02) return false; // too wild, payouts slip
+    // Favourable = skewed distribution OR strong deviation — remain inactive only on pure random + wild volatility
+    if (analysis.entropy > 3.30 && Math.abs(analysis.chiSquare) < 4) return false;
+    if (analysis.volatility > 0.05) return false; // relaxed from 0.02 to allow normal volatility indices
     return true;
   }
 

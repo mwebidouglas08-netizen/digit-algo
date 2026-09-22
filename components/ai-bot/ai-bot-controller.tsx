@@ -187,8 +187,18 @@ export function AIBotController({
       let bestScore = 0;
 
       const health = getStrategyHealth();
+      // Respect user market filter: if config.markets non-empty, only score those display names
+      const allowed = config.markets && config.markets.length > 0
+        ? new Set(config.markets.map(m => m.toLowerCase()))
+        : null;
       for (const sym of symbols) {
         const symName = sym.underlying_symbol;
+        // Filter by user-selected markets (e.g., 'Volatility 100' matches display_name)
+        if (allowed && !allowed.has(sym.display_name?.toLowerCase() ?? '') && !allowed.has(symName.toLowerCase())) {
+          // also allow by underlying symbol prefix match (R_100 etc.)
+          const match = Array.from(allowed).some(a => symName.toLowerCase().includes(a.replace(/\s+/g, '').toLowerCase()) || sym.display_name?.toLowerCase().includes(a));
+          if (!match) continue;
+        }
         const ticks = allTicksRef.current.get(symName) ?? [];
         if (ticks.length < 20) continue;
         // Volatility indices all use pipSize 2; use real pipSize for active symbol, 2 for others is correct
