@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AIBotPanel } from './ai-bot-panel';
@@ -19,6 +20,9 @@ interface AIBotControllerProps {
   balance?: number;
   isConnected?: boolean;
   onBuy: () => void;
+  setContractMode: (mode: string) => void;
+  setSelectedDigit: (digit: number) => void;
+  setStake: (value: string) => void;
   stake?: number;
   duration?: number;
 }
@@ -31,16 +35,18 @@ export function AIBotController({
   balance = 0,
   isConnected = false,
   onBuy,
-  stake = 1,
-  duration = 5,
+  setContractMode,
+  setSelectedDigit,
+  setStake,
 }: AIBotControllerProps) {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [tickCount, setTickCount] = useState(0);
-  const [lastSignalTime, setLastSignalTime] = useState(0);
+  const [mounted, setMounted] = useState(false);
   const { ws } = useDerivWSContext();
   const allTicksRef = useRef<Map<string, number[]>>(new Map());
   const subscriptionsRef = useRef<Map<string, () => void>>(new Map());
   const buyCooldownRef = useRef(false);
+  const lastPricesRef = useRef<Map<string, number>>(new Map());
 
   const {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
@@ -48,6 +54,8 @@ export function AIBotController({
     startBot, stopBot, updateConfig, processTick, checkRules, prepareTrade,
     triggerEmergencyStop, resetEmergencyStop,
   } = useAIBot();
+
+  useEffect(() => { setMounted(true); }, []);
 
   const handleStart = useCallback(() => {
     const volSymbols = symbols
@@ -57,51 +65,69 @@ export function AIBotController({
     startBot(finalSymbols);
   }, [symbols, startBot]);
 
-  const executeAutoBuy = useCallback(() => {
+  const executeAutoBuy = useCallback((signal?: { contractMode: string; predictedDigit?: number; recommendedStake: number }) => {
     if (buyCooldownRef.current) return;
     buyCooldownRef.current = true;
-    onBuy();
-    setTimeout(() => { buyCooldownRef.current = false; }, 2000);
-  }, [onBuy]);
+
+    if (signal) {
+      if (signal.contractMode === 'DIGITOVER') {
+        setContractMode('DIGITOVER');
+        setSelectedDigit(2);
+      } else if (signal.contractMode === 'DIGITUNDER') {
+        setContractMode('DIGITUNDER');
+        setSelectedDigit(8);
+      } else if (signal.contractMode === 'DIGITMATCH') {
+        setContractMode('DIGITMATCH');
+        setSelectedDigit(signal.predictedDigit ?? 5);
+      } else if (signal.contractMode === 'DIGITDIFF') {
+        setContractMode('DIGITDIFF');
+        setSelectedDigit(signal.predictedDigit ?? 5);
+      }
+      setStake(String(Math.min(signal.recommendedStake, 10)));
+    }
+
+    setTimeout(() => {
+      onBuy();
+      setTimeout(() => { buyCooldownRef.current = false; }, 3000);
+    }, 1000);
+  }, [onBuy, setContractMode, setSelectedDigit, setStake]);
 
   useEffect(() => {
-    if (!isRunning || !ws || !isConnected) return;
+    if (!isRunning || !currentTick || !activeSymbol) return;
 
-    if (currentTick && activeSymbol) {
-      const symbol = activeSymbol.underlying_symbol;
-      const price = currentTick.quote;
+    const symbol = activeSymbol.underlying_symbol;
+    const price = currentTick.quote;
 
-      const ticks = allTicksRef.current.get(symbol) ?? [];
-      ticks.push(price);
-      if (ticks.length > 200) ticks.shift();
-      allTicksRef.current.set(symbol, ticks);
-      setTickCount(prev => prev + 1);
+    const ticks = allTicksRef.current.get(symbol) ?? [];
+    ticks.push(price);
+    if (ticks.length > 200) ticks.shift();
+    allTicksRef.current.set(symbol, ticks);
+    setTickCount(prev => prev + 1);
 
-      const stats = computeDigitStats(ticks, 2);
+    const stats = computeDigitStats(ticks, 2);
 
-      const ruleSignal = checkRules(symbol, price, stats);
-      if (ruleSignal && config.autoTrade && !emergencyStop) {
-        const check = prepareTrade(ruleSignal, balance);
-        if (check.willTrade) {
-          executeAutoBuy();
-        }
+    const ruleSignal = checkRules(symbol, price, stats);
+    if (ruleSignal && config.autoTrade && !emergencyStop) {
+      const check = prepareTrade(ruleSignal, balance);
+      if (check.willTrade) {
+        executeAutoBuy(ruleSignal);
       }
+      return;
+    }
 
-      if (!ruleSignal) {
-        const sig = processTick(symbol, price, stats);
-        if (sig && config.autoTrade && !emergencyStop) {
-          const check = prepareTrade(sig, balance);
-          if (check.willTrade) {
-            executeAutoBuy();
-          }
-        }
+    const sig = processTick(symbol, price, stats);
+    if (sig && config.autoTrade && !emergencyStop) {
+      const check = prepareTrade(sig, balance);
+      if (check.willTrade) {
+        executeAutoBuy(sig);
       }
     }
-  }, [isRunning, currentTick, activeSymbol, ws, isConnected, processTick, checkRules, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy]);
+
+    lastPricesRef.current.set(symbol, price);
+  }, [isRunning, currentTick, activeSymbol, processTick, checkRules, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy]);
 
   useEffect(() => {
     if (!isRunning || !ws || !isConnected || symbols.length === 0) return;
-    if (subscriptionsRef.current.size > 0) return;
 
     symbols.forEach(symbol => {
       const sym = symbol.underlying_symbol;
@@ -129,6 +155,31 @@ export function AIBotController({
     return () => {};
   }, [isRunning, ws, isConnected, symbols]);
 
+  const panelEl = mounted ? createPortal(
+    <AIBotPanel
+      isOpen={isPanelOpen}
+      onClose={() => setIsPanelOpen(false)}
+      isRunning={isRunning}
+      config={config}
+      activities={activities}
+      signals={signals}
+      tradeHistory={tradeHistory}
+      dailyStats={dailyStats}
+      lastAnalysis={lastAnalysis}
+      emergencyStop={emergencyStop}
+      onStart={handleStart}
+      onStop={stopBot}
+      onUpdateConfig={updateConfig}
+      onEmergencyStop={triggerEmergencyStop}
+      onResetEmergencyStop={resetEmergencyStop}
+      balance={balance}
+      tickCount={tickCount}
+      currentSymbol={activeSymbol?.underlying_symbol ?? null}
+      isConnected={isConnected}
+    />,
+    document.body
+  ) : null;
+
   return (
     <>
       <Button
@@ -136,7 +187,7 @@ export function AIBotController({
         size="sm"
         onClick={() => setIsPanelOpen(true)}
         className={cn(
-          "relative gap-2 h-9 px-3 font-semibold shrink-0",
+          "relative gap-2 h-9 px-3 font-semibold shrink-0 cursor-pointer",
           isRunning
             ? "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/25"
             : "border-emerald-500/50 text-emerald-600 hover:bg-emerald-500/10"
@@ -151,30 +202,7 @@ export function AIBotController({
         <Zap className="h-4 w-4" />
         <span>AI Bot</span>
       </Button>
-
-      {isPanelOpen && (
-        <AIBotPanel
-          isOpen={isPanelOpen}
-          onClose={() => setIsPanelOpen(false)}
-          isRunning={isRunning}
-          config={config}
-          activities={activities}
-          signals={signals}
-          tradeHistory={tradeHistory}
-          dailyStats={dailyStats}
-          lastAnalysis={lastAnalysis}
-          emergencyStop={emergencyStop}
-          onStart={handleStart}
-          onStop={stopBot}
-          onUpdateConfig={updateConfig}
-          onEmergencyStop={triggerEmergencyStop}
-          onResetEmergencyStop={resetEmergencyStop}
-          balance={balance}
-          tickCount={tickCount}
-          currentSymbol={activeSymbol?.underlying_symbol ?? null}
-          isConnected={isConnected}
-        />
-      )}
+      {panelEl}
     </>
   );
 }

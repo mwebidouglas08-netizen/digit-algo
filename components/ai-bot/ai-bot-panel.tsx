@@ -124,7 +124,7 @@ export function AIBotPanel({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background w-full h-full">
+    <div className="fixed inset-0 z-[100] flex flex-col bg-background w-full h-full">
       <div className="flex items-center justify-between border-b px-3 py-2 sm:px-6 sm:py-3 shrink-0">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", isRunning ? "bg-emerald-500" : "bg-muted")}>

@@ -268,6 +268,9 @@ export function DigitsView({
                 balance={activeAccount ? parseFloat(activeAccount.balance) : 0}
                 isConnected={isConnected}
                 onBuy={handleBuy}
+                setContractMode={setContractMode}
+                setSelectedDigit={setSelectedDigit}
+                setStake={setStake}
                 stake={parseFloat(stake) || 1}
                 duration={duration}
               />
