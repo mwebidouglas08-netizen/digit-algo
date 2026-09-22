@@ -9,7 +9,7 @@ import { useAIBot } from './use-ai-bot';
 import { useDerivWSContext } from '@/components/custom/deriv-ws-provider';
 import { cn } from '@/lib/utils';
 import type { ActiveSymbol, Tick } from '@deriv/core';
-import type { DigitStats } from '@/lib/types';
+import type { DigitStats, ContractMode } from '@/lib/types';
 import { computeDigitStats } from '@/lib/digit-stats';
 
 interface AIBotControllerProps {
@@ -20,7 +20,7 @@ interface AIBotControllerProps {
   balance?: number;
   isConnected?: boolean;
   onBuy: () => void;
-  setContractMode: (mode: string) => void;
+  setContractMode: (mode: ContractMode) => void;
   setSelectedDigit: (digit: number) => void;
   setStake: (value: string) => void;
   stake?: number;
