@@ -92,9 +92,12 @@ export function AIBotPanel({
   const formatCurrency = (val: number) => `$${val.toFixed(2)}`;
   const formatPct = (val: number) => `${val.toFixed(1)}%`;
   const winRate = tradeHistory.length > 0
-    ? (tradeHistory.filter(t => t.result === 'WIN').length / tradeHistory.length) * 100
+    ? (tradeHistory.filter(t => t.result === 'WIN').length / tradeHistory.filter(t => t.result !== 'PENDING').length || 0) * 100
     : 0;
   const pnl = tradeHistory.reduce((sum, t) => sum + (t.profit ?? 0), 0);
+  const wins = tradeHistory.filter(t => t.result === 'WIN').length;
+  const losses = tradeHistory.filter(t => t.result === 'LOSS').length;
+  const pending = tradeHistory.filter(t => t.result === 'PENDING').length;
 
   const getSignalColor = (confidence: number) => {
     if (confidence >= 75) return 'text-emerald-500';
@@ -192,10 +195,10 @@ export function AIBotPanel({
                   { label: 'Balance', value: formatCurrency(balance), icon: DollarSign, color: 'text-emerald-500' },
                   { label: 'P/L', value: formatCurrency(pnl), icon: pnl >= 0 ? TrendingUp : TrendingDown, color: pnl >= 0 ? 'text-emerald-500' : 'text-red-500' },
                   { label: 'Win Rate', value: formatPct(winRate), icon: Target, color: 'text-blue-500' },
-                  { label: 'Trades', value: String(tradeHistory.length), icon: BarChart3, color: 'text-purple-500' },
+                  { label: 'Wins', value: `${wins}W / ${losses}L${pending > 0 ? ` / ${pending}P` : ''}`, icon: BarChart3, color: 'text-emerald-500' },
                   { label: 'Signals', value: String(signals.length), icon: Zap, color: 'text-yellow-500' },
                   { label: 'Ticks', value: String(tickCount), icon: Activity, color: 'text-cyan-500' },
-                  { label: 'Streak', value: `${dailyStats.currentStreak}${dailyStats.currentStreak > 0 ? 'W' : 'L'}`, icon: TrendingUp, color: dailyStats.currentStreak > 0 ? 'text-emerald-500' : 'text-red-500' },
+                  { label: 'Streak', value: `${Math.abs(dailyStats.currentStreak)}${dailyStats.currentStreak > 0 ? 'W' : 'L'}`, icon: TrendingUp, color: dailyStats.currentStreak > 0 ? 'text-emerald-500' : 'text-red-500' },
                   { label: 'Daily', value: formatCurrency(dailyStats.dailyPnL), icon: DollarSign, color: dailyStats.dailyPnL >= 0 ? 'text-emerald-500' : 'text-red-500' },
                 ].map(({ label, value, icon: Icon, color }) => (
                   <Card key={label} className="bg-card/50">
@@ -377,24 +380,41 @@ export function AIBotPanel({
               {tradeHistory.length === 0 ? (
                 <div className="text-center py-16 text-muted-foreground text-sm">No trades yet</div>
               ) : (
-                tradeHistory.slice(-30).reverse().map((trade, i) => (
-                  <Card key={trade.id || i} className="bg-card/50">
+                tradeHistory.slice(-50).reverse().map((trade, i) => (
+                  <Card key={trade.id || i} className={cn(
+                    "bg-card/50",
+                    trade.result === 'WIN' && "border-emerald-500/30",
+                    trade.result === 'LOSS' && "border-red-500/30",
+                  )}>
                     <CardContent className="p-3">
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="font-bold">{trade.digit ?? '-'}</span>
-                            <Badge variant={trade.result === 'WIN' ? 'default' : 'destructive'} className="text-[10px]">{trade.result}</Badge>
+                            <Badge
+                              variant={trade.result === 'WIN' ? 'default' : trade.result === 'LOSS' ? 'destructive' : 'secondary'}
+                              className={cn(
+                                "text-[10px]",
+                                trade.result === 'WIN' && "bg-emerald-500 hover:bg-emerald-600",
+                                trade.result === 'PENDING' && "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+                              )}
+                            >
+                              {trade.result === 'PENDING' ? 'PENDING' : trade.result}
+                            </Badge>
                             <Badge variant="outline" className="text-[10px]">{trade.contractMode}</Badge>
                           </div>
                           <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
                             <span>{new Date(trade.timestamp).toLocaleTimeString()}</span>
                             <span>{trade.symbol}</span>
-                            <span>${trade.stake}</span>
+                            <span>${trade.stake.toFixed(2)}</span>
+                            {trade.signalConfidence > 0 && <span>{trade.signalConfidence.toFixed(0)}%</span>}
                           </div>
                         </div>
-                        <div className={cn("text-sm sm:text-base font-bold", (trade.profit ?? 0) >= 0 ? 'text-emerald-500' : 'text-red-500')}>
-                          {(trade.profit ?? 0) >= 0 ? '+' : ''}{formatCurrency(trade.profit ?? 0)}
+                        <div className={cn(
+                          "text-sm sm:text-base font-bold",
+                          trade.result === 'WIN' ? 'text-emerald-500' : trade.result === 'LOSS' ? 'text-red-500' : 'text-yellow-400'
+                        )}>
+                          {trade.result === 'PENDING' ? '...' : `${trade.profit >= 0 ? '+' : ''}$${trade.profit.toFixed(2)}`}
                         </div>
                       </div>
                     </CardContent>

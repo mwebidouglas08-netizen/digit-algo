@@ -29,7 +29,7 @@ import type {
   DurationLimits,
   BuyResult,
 } from '@deriv/core';
-import type { ContractMode, TradeType, DigitStats } from '../lib/types';
+import type { ContractMode, TradeType, DigitStats, OpenPosition } from '../lib/types';
 import { ALL_CONTROL_KEYS } from '../lib/app-config';
 import type { ControlKey, DigitsAppConfig } from '../lib/app-config';
 
@@ -105,6 +105,7 @@ export interface DigitsViewProps {
   buyResult: BuyResult | null;
   buyError: string | null;
   clearBuyResult: () => void;
+  openPositions: OpenPosition[];
   // Branding (used by preview route; no-op in the real app)
   logoSrc?: string;
   appName?: string;
@@ -165,6 +166,7 @@ export function DigitsView({
   buyResult,
   buyError,
   clearBuyResult,
+  openPositions,
   logoSrc,
   appName,
   showAppName,
@@ -270,6 +272,9 @@ export function DigitsView({
                 balance={activeAccount ? parseFloat(activeAccount.balance) : 0}
                 isConnected={isConnected}
                 autoBuy={autoBuy}
+                buyResult={buyResult}
+                openPositions={openPositions}
+                selectSymbol={selectSymbol}
               />
             )}
             <ThemeToggle />

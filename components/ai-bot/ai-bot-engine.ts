@@ -327,18 +327,28 @@ export class AIBotEngine {
 
   checkOver2Rule(symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats): TradeSignal | null {
     if (!this.config.over2Enabled) return null;
-    if (lastDigit > 1 || secondLastDigit > 1) return null;
+    if (lastDigit > 2 || secondLastDigit > 2) return null;
 
-    const confidence = 88;
+    const history = this.priceHistory.get(symbol) ?? [];
+    const recentDigits = history.slice(-10).map(p => parseInt(p.toFixed(2).slice(-1), 10));
+    const lowCount = recentDigits.filter(d => d <= 2).length;
+    const veryLowCount = recentDigits.filter(d => d <= 1).length;
+
+    let confidence = 75;
+    if (veryLowCount >= 2 && lowCount >= 4) confidence = 92;
+    else if (veryLowCount >= 2 && lowCount >= 3) confidence = 88;
+    else if (lastDigit <= 1 && secondLastDigit <= 1) confidence = 88;
+    else if (lastDigit <= 2 && secondLastDigit <= 2) confidence = 78;
+
     const stake = Math.min(this.config.stake, this.config.stake);
-    const recentTicks = this.priceHistory.get(symbol)?.slice(-10) ?? [];
-    const reasons = [`Over 2: Last two digits are ${secondLastDigit} then ${lastDigit} (both ≤ 1)`];
+    const recentTicks = history.slice(-10);
+    const reasons = [`Over 2: Last two digits ${secondLastDigit}, ${lastDigit}. ${lowCount} of last ${recentDigits.length} digits are ≤ 2`];
 
     const signal: TradeSignal = {
       id: generateId(),
       timestamp: Date.now(),
       symbol,
-      signalType: 'STRONG_BUY',
+      signalType: confidence >= 85 ? 'STRONG_BUY' : 'BUY',
       confidence,
       contractMode: 'DIGITOVER',
       predictedDigit: this.config.overThreshold,
@@ -346,8 +356,11 @@ export class AIBotEngine {
       currentTick: recentTicks[recentTicks.length - 1] ?? 0,
       recentTicks,
       reasoning: reasons,
-      indicators: [{ name: 'Over 2 Rule', value: `${secondLastDigit}, ${lastDigit}`, bullish: true }],
-      riskLevel: 'LOW',
+      indicators: [
+        { name: 'Over 2 Rule', value: `${secondLastDigit}, ${lastDigit}`, bullish: true },
+        { name: 'Low Digits', value: `${lowCount}/${recentDigits.length}`, bullish: true },
+      ],
+      riskLevel: confidence >= 85 ? 'LOW' : 'MEDIUM',
       recommendedStake: stake,
       reasonForEntry: reasons[0],
       marketCondition: 'Rule-based Over 2',
@@ -356,30 +369,40 @@ export class AIBotEngine {
 
     this.signals = [signal, ...this.signals].slice(0, 200);
     this.onSignal?.(signal);
-    this.addActivity({ type: 'SIGNAL', message: `${symbol}: OVER 2 | Digit ${lastDigit} after ${secondLastDigit} | ${confidence}% confidence` });
+    this.addActivity({ type: 'SIGNAL', message: `${symbol}: OVER 2 | Digits ${secondLastDigit}, ${lastDigit} | ${lowCount}/${recentDigits.length} low | ${confidence}% confidence` });
     return signal;
   }
 
   checkUnder8Rule(symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats): TradeSignal | null {
     if (!this.config.under8Enabled) return null;
-    if (lastDigit < 8 || secondLastDigit < 8) return null;
+    if (lastDigit < 7 || secondLastDigit < 7) return null;
+
+    const history = this.priceHistory.get(symbol) ?? [];
+    const recentDigits = history.slice(-10).map(p => parseInt(p.toFixed(2).slice(-1), 10));
+    const highCount = recentDigits.filter(d => d >= 7).length;
+    const veryHighCount = recentDigits.filter(d => d >= 8).length;
 
     const digit8Pct = digitStats.percentages[8] ?? 0;
     const digit9Pct = digitStats.percentages[9] ?? 0;
     const combinedPct = digit8Pct + digit9Pct;
 
-    if (combinedPct >= 10) return null;
+    let confidence = 75;
+    if (veryHighCount >= 2 && highCount >= 4 && combinedPct < 10) confidence = 93;
+    else if (veryHighCount >= 2 && highCount >= 3 && combinedPct < 12) confidence = 88;
+    else if (lastDigit >= 8 && secondLastDigit >= 8 && combinedPct < 10) confidence = 85;
+    else if (lastDigit >= 7 && secondLastDigit >= 7 && combinedPct < 12) confidence = 80;
 
-    const confidence = 80 + Math.min(15, (10 - combinedPct) * 3);
+    if (combinedPct >= 15) return null;
+
     const stake = Math.min(this.config.stake, this.config.stake);
-    const recentTicks = this.priceHistory.get(symbol)?.slice(-10) ?? [];
-    const reasons = [`Under 8: Last two digits are ${secondLastDigit} then ${lastDigit} (both ≥ 8). Combined digit 8+9 frequency: ${combinedPct.toFixed(1)}% (< 10%)`];
+    const recentTicks = history.slice(-10);
+    const reasons = [`Under 8: Last two digits ${secondLastDigit}, ${lastDigit}. ${highCount} of last ${recentDigits.length} digits are ≥ 7. Combined 8+9 freq: ${combinedPct.toFixed(1)}%`];
 
     const signal: TradeSignal = {
       id: generateId(),
       timestamp: Date.now(),
       symbol,
-      signalType: 'STRONG_BUY',
+      signalType: confidence >= 85 ? 'STRONG_BUY' : 'BUY',
       confidence: Math.min(95, confidence),
       contractMode: 'DIGITUNDER',
       predictedDigit: this.config.underThreshold,
@@ -389,9 +412,10 @@ export class AIBotEngine {
       reasoning: reasons,
       indicators: [
         { name: 'Under 8 Rule', value: `${secondLastDigit}, ${lastDigit}`, bullish: true },
+        { name: 'High Digits', value: `${highCount}/${recentDigits.length}`, bullish: true },
         { name: 'Digit 8+9 Freq', value: `${combinedPct.toFixed(1)}%`, bullish: true },
       ],
-      riskLevel: 'LOW',
+      riskLevel: confidence >= 85 ? 'LOW' : 'MEDIUM',
       recommendedStake: stake,
       reasonForEntry: reasons[0],
       marketCondition: 'Rule-based Under 8',
@@ -400,7 +424,7 @@ export class AIBotEngine {
 
     this.signals = [signal, ...this.signals].slice(0, 200);
     this.onSignal?.(signal);
-    this.addActivity({ type: 'SIGNAL', message: `${symbol}: UNDER 8 | Digit ${lastDigit} after ${secondLastDigit} | Combined 8+9: ${combinedPct.toFixed(1)}% | ${confidence.toFixed(0)}% confidence` });
+    this.addActivity({ type: 'SIGNAL', message: `${symbol}: UNDER 8 | Digits ${secondLastDigit}, ${lastDigit} | ${highCount}/${recentDigits.length} high | 8+9: ${combinedPct.toFixed(1)}% | ${confidence.toFixed(0)}% confidence` });
     return signal;
   }
 
@@ -431,6 +455,10 @@ export class AIBotEngine {
 
     if (digitStats.totalTicks < 10) return null;
 
+    const history = this.priceHistory.get(symbol) ?? [];
+    const recentDigits = history.slice(-20).map(p => parseInt(p.toFixed(2).slice(-1), 10));
+    const lastDigit = recentDigits[recentDigits.length - 1] ?? 0;
+
     const reasons: string[] = [];
     const indicators: SignalIndicator[] = [];
     let confidence = 50;
@@ -444,46 +472,103 @@ export class AIBotEngine {
     const highestPct = digitStats.percentages[highestDigit];
     const lowestPct = digitStats.percentages[lowestDigit];
 
+    const lowDigitCount = recentDigits.filter(d => d <= 2).length;
+    const highDigitCount = recentDigits.filter(d => d >= 7).length;
+    const midDigitCount = recentDigits.filter(d => d >= 3 && d <= 6).length;
+
+    const recentLowPct = (lowDigitCount / recentDigits.length) * 100;
+    const recentHighPct = (highDigitCount / recentDigits.length) * 100;
+
+    const overallLowPct = digitStats.percentages.slice(0, 3).reduce((a, b) => a + b, 0);
+    const overallHighPct = digitStats.percentages.slice(7, 10).reduce((a, b) => a + b, 0);
+
+    const momentum = recentLowPct - overallLowPct;
+    const highMomentum = recentHighPct - overallHighPct;
+
+    if (momentum > 8 && lowDigitCount >= 3) {
+      confidence += 15;
+      reasons.push(`Low digit momentum: ${recentLowPct.toFixed(0)}% recent vs ${overallLowPct.toFixed(0)}% overall`);
+      indicators.push({ name: 'Low Momentum', value: `${momentum.toFixed(1)}%`, bullish: true });
+    }
+    if (highMomentum > 8 && highDigitCount >= 3) {
+      confidence += 12;
+      reasons.push(`High digit momentum: ${recentHighPct.toFixed(0)}% recent vs ${overallHighPct.toFixed(0)}% overall`);
+      indicators.push({ name: 'High Momentum', value: `${highMomentum.toFixed(1)}%`, bullish: true });
+    }
+
+    if (lowDigitCount >= 4) {
+      contractMode = 'DIGITOVER';
+      direction = `Over ${this.config.overThreshold}`;
+      confidence += 12;
+      reasons.push(`${lowDigitCount} of last ${recentDigits.length} digits are ≤ 2`);
+      indicators.push({ name: 'Over Signal', value: `${lowDigitCount}/${recentDigits.length}`, bullish: true });
+    } else if (highDigitCount >= 4) {
+      contractMode = 'DIGITUNDER';
+      direction = `Under ${this.config.underThreshold}`;
+      confidence += 12;
+      reasons.push(`${highDigitCount} of last ${recentDigits.length} digits are ≥ 7`);
+      indicators.push({ name: 'Under Signal', value: `${highDigitCount}/${recentDigits.length}`, bullish: true });
+    }
+
+    const coldDigits: number[] = [];
+    const hotDigits: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const expected = 10;
+      const actual = digitStats.percentages[i];
+      if (actual < expected - 3) coldDigits.push(i);
+      if (actual > expected + 3) hotDigits.push(i);
+    }
+
+    if (contractMode === 'DIGITDIFF' && coldDigits.length > 0) {
+      const coldDigit = coldDigits[0];
+      contractMode = 'DIGITDIFF';
+      predictedDigit = coldDigit;
+      direction = `Differ from ${coldDigit}`;
+      confidence += 8;
+      reasons.push(`Digit ${coldDigit} is cold at ${digitStats.percentages[coldDigit].toFixed(1)}%`);
+    } else if (contractMode === 'DIGITDIFF' && hotDigits.length > 0) {
+      const hotDigit = hotDigits[0];
+      contractMode = 'DIGITMATCH';
+      predictedDigit = hotDigit;
+      direction = `Match ${hotDigit}`;
+      confidence += 8;
+      reasons.push(`Digit ${hotDigit} is hot at ${digitStats.percentages[hotDigit].toFixed(1)}%`);
+    }
+
     const deviation = Math.sqrt(digitStats.percentages.reduce((sum, p) => sum + Math.pow(p - avgPct, 2), 0) / 10);
     indicators.push({ name: 'Digit Deviation', value: `${deviation.toFixed(1)}%`, bullish: deviation > 2 });
-    if (deviation > 2) { confidence += 8; reasons.push(`Digit deviation ${deviation.toFixed(1)}%`); }
+    if (deviation > 2) { confidence += 6; reasons.push(`Digit deviation ${deviation.toFixed(1)}%`); }
 
-    if (chiSquare > 12) { confidence += 10; indicators.push({ name: 'Chi-Square', value: chiSquare.toFixed(1), bullish: true }); reasons.push(`χ²=${chiSquare.toFixed(1)}`); }
+    if (chiSquare > 12) { confidence += 8; indicators.push({ name: 'Chi-Square', value: chiSquare.toFixed(1), bullish: true }); reasons.push(`χ²=${chiSquare.toFixed(1)}`); }
     else indicators.push({ name: 'Chi-Square', value: chiSquare.toFixed(1), bullish: false });
 
-    if (entropy < 3.2) { confidence += 8; indicators.push({ name: 'Entropy', value: entropy.toFixed(2), bullish: true }); reasons.push(`Low entropy ${entropy.toFixed(2)}`); }
+    if (entropy < 3.2) { confidence += 6; indicators.push({ name: 'Entropy', value: entropy.toFixed(2), bullish: true }); reasons.push(`Low entropy ${entropy.toFixed(2)}`); }
     else indicators.push({ name: 'Entropy', value: entropy.toFixed(2), bullish: false });
 
-    if (Math.abs(zScore) > 1.5) { confidence += 7; indicators.push({ name: 'Z-Score', value: zScore.toFixed(2), bullish: true }); reasons.push(`Z-score ${zScore.toFixed(2)}`); }
+    if (Math.abs(zScore) > 1.5) { confidence += 5; indicators.push({ name: 'Z-Score', value: zScore.toFixed(2), bullish: true }); reasons.push(`Z-score ${zScore.toFixed(2)}`); }
     else indicators.push({ name: 'Z-Score', value: zScore.toFixed(2), bullish: false });
 
     for (const p of patterns) {
-      if (p.confidence > 50) { confidence += p.confidence * 0.12; reasons.push(p.description); if (p.predictedNext !== undefined) predictedDigit = p.predictedNext; }
+      if (p.confidence > 50) { confidence += p.confidence * 0.08; reasons.push(p.description); if (p.predictedNext !== undefined) predictedDigit = p.predictedNext; }
     }
 
     if (streaks.streakLength >= 3 && streaks.isBreaking) {
-      confidence += 10; reasons.push(`${streaks.streakLength}x ${streaks.currentDigit} streak breaking`);
+      confidence += 8; reasons.push(`${streaks.streakLength}x ${streaks.currentDigit} streak breaking`);
       indicators.push({ name: 'Streak Break', value: `${streaks.streakLength}x ${streaks.currentDigit}`, bullish: true });
     }
 
-    if (volatility > 0.01) { confidence -= 5; } else if (volatility < 0.001) { confidence += 4; }
+    if (volatility > 0.01) { confidence -= 5; } else if (volatility < 0.001) { confidence += 3; }
     indicators.push({ name: 'Volatility', value: volatility.toFixed(4), bullish: volatility > 0.001 && volatility < 0.01 });
 
     if (trend.strength > 70 && trend.direction !== 'SIDEWAYS') { confidence -= 3; }
     indicators.push({ name: 'Trend', value: `${trend.direction} (${trend.strength.toFixed(0)}%)`, bullish: trend.direction === 'SIDEWAYS' });
 
-    if (this.config.overUnderStrategy && overUnderSignal) {
-      confidence += overUnderSignal.confidence * 0.3;
+    if (this.config.overUnderStrategy && overUnderSignal && contractMode === 'DIGITDIFF') {
+      confidence += overUnderSignal.confidence * 0.2;
       contractMode = overUnderSignal.type === 'OVER_2' ? 'DIGITOVER' : 'DIGITUNDER';
       direction = overUnderSignal.type === 'OVER_2' ? `Over ${this.config.overThreshold}` : `Under ${this.config.underThreshold}`;
       reasons.push(overUnderSignal.reason);
       indicators.push({ name: overUnderSignal.type === 'OVER_2' ? 'Over' : 'Under', value: `${overUnderSignal.confidence.toFixed(0)}%`, bullish: true });
-    } else if (highestPct > 12) {
-      contractMode = 'DIGITMATCH'; predictedDigit = highestDigit; direction = `Match ${highestDigit}`;
-      confidence += 8; reasons.push(`Digit ${highestDigit} at ${highestPct.toFixed(1)}%`);
-    } else if (lowestPct < 8) {
-      contractMode = 'DIGITDIFF'; direction = `Differ from ${lowestDigit}`;
-      confidence += 6; reasons.push(`Digit ${lowestDigit} at ${lowestPct.toFixed(1)}%`);
     }
 
     let riskLevel: RiskLevel = 'MEDIUM';

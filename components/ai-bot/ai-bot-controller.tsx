@@ -8,8 +8,8 @@ import { AIBotPanel } from './ai-bot-panel';
 import { useAIBot } from './use-ai-bot';
 import { useDerivWSContext } from '@/components/custom/deriv-ws-provider';
 import { cn } from '@/lib/utils';
-import type { ActiveSymbol, Tick } from '@deriv/core';
-import type { DigitStats, ContractMode } from '@/lib/types';
+import type { ActiveSymbol, Tick, BuyResult } from '@deriv/core';
+import type { DigitStats, ContractMode, OpenPosition } from '@/lib/types';
 import { computeDigitStats } from '@/lib/digit-stats';
 
 interface AIBotControllerProps {
@@ -20,6 +20,9 @@ interface AIBotControllerProps {
   balance?: number;
   isConnected?: boolean;
   autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number }) => Promise<boolean>;
+  buyResult: BuyResult | null;
+  openPositions: OpenPosition[];
+  selectSymbol: (symbol: string) => void;
 }
 
 export function AIBotController({
@@ -30,6 +33,9 @@ export function AIBotController({
   balance = 0,
   isConnected = false,
   autoBuy,
+  buyResult,
+  openPositions,
+  selectSymbol,
 }: AIBotControllerProps) {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [tickCount, setTickCount] = useState(0);
@@ -38,15 +44,43 @@ export function AIBotController({
   const allTicksRef = useRef<Map<string, number[]>>(new Map());
   const subscriptionsRef = useRef<Map<string, () => void>>(new Map());
   const buyCooldownRef = useRef(false);
+  const pendingTradesRef = useRef<Map<number, { signalId: string; stake: number }>>(new Map());
+  const lastBuyResultRef = useRef<BuyResult | null>(null);
+  const lastSignalRef = useRef<string | null>(null);
 
   const {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
     lastAnalysis, emergencyStop,
     startBot, stopBot, updateConfig, processTick, checkRules, prepareTrade,
-    triggerEmergencyStop, resetEmergencyStop,
+    recordTradeResult, triggerEmergencyStop, resetEmergencyStop,
   } = useAIBot();
 
   useEffect(() => { setMounted(true); }, []);
+
+  useEffect(() => {
+    if (buyResult && buyResult !== lastBuyResultRef.current) {
+      lastBuyResultRef.current = buyResult;
+      const signalId = lastSignalRef.current ?? 'unknown';
+      pendingTradesRef.current.set(buyResult.contractId, { signalId, stake: buyResult.buyPrice });
+    }
+  }, [buyResult]);
+
+  useEffect(() => {
+    for (const pos of openPositions) {
+      if (!pendingTradesRef.current.has(pos.contract_id)) continue;
+      const isClosed = !!pos.is_sold || !!pos.is_expired || (pos.status !== 'open' && pos.status !== '');
+      if (!isClosed) continue;
+
+      const profit = parseFloat(pos.profit) || 0;
+      const result: 'WIN' | 'LOSS' = profit >= 0 ? 'WIN' : 'LOSS';
+      const pending = pendingTradesRef.current.get(pos.contract_id);
+
+      if (pending) {
+        recordTradeResult(pending.signalId, result, profit);
+      }
+      pendingTradesRef.current.delete(pos.contract_id);
+    }
+  }, [openPositions, recordTradeResult]);
 
   const handleStart = useCallback(() => {
     const volSymbols = symbols
@@ -56,9 +90,10 @@ export function AIBotController({
     startBot(finalSymbols);
   }, [symbols, startBot]);
 
-  const executeAutoBuy = useCallback(async (signal: { contractMode: ContractMode; predictedDigit?: number; recommendedStake: number }) => {
+  const executeAutoBuy = useCallback(async (signal: { id: string; contractMode: ContractMode; predictedDigit?: number; recommendedStake: number }) => {
     if (buyCooldownRef.current) return;
     buyCooldownRef.current = true;
+    lastSignalRef.current = signal.id;
 
     let digit = 5;
     let contractMode: ContractMode = 'DIGITDIFF';
@@ -113,6 +148,38 @@ export function AIBotController({
       }
     }
   }, [isRunning, currentTick, activeSymbol, processTick, checkRules, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy]);
+
+  useEffect(() => {
+    if (!isRunning || !ws || !isConnected || symbols.length === 0) return;
+
+    const interval = setInterval(() => {
+      let bestSignal: { id: string; symbol: string; contractMode: ContractMode; predictedDigit?: number; recommendedStake: number; confidence: number } | null = null;
+      let bestConfidence = 0;
+
+      for (const sym of symbols) {
+        const symName = sym.underlying_symbol;
+        const ticks = allTicksRef.current.get(symName) ?? [];
+        if (ticks.length < 15) continue;
+
+        const lastPrice = ticks[ticks.length - 1];
+        const stats = computeDigitStats(ticks, 2);
+        const sig = processTick(symName, lastPrice, stats);
+        const ruleSignal = checkRules(symName, lastPrice, stats);
+
+        const candidate = ruleSignal && ruleSignal.confidence > (sig?.confidence ?? 0) ? ruleSignal : sig;
+        if (candidate && candidate.confidence > bestConfidence) {
+          bestConfidence = candidate.confidence;
+          bestSignal = candidate;
+        }
+      }
+
+      if (bestSignal && bestSignal.symbol !== activeSymbol?.underlying_symbol) {
+        selectSymbol(bestSignal.symbol);
+      }
+    }, config.scanInterval || 3000);
+
+    return () => clearInterval(interval);
+  }, [isRunning, ws, isConnected, symbols, activeSymbol, processTick, checkRules, selectSymbol, config.scanInterval]);
 
   useEffect(() => {
     if (!isRunning || !ws || !isConnected || symbols.length === 0) return;
