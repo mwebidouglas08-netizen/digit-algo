@@ -23,6 +23,8 @@ export interface TradeSignal {
   recommendedStake: number;
   reasonForEntry: string;
   reasonForRejection?: string;
+  marketCondition?: string;
+  type?: string;
 }
 
 export interface SignalIndicator {
@@ -51,6 +53,7 @@ export interface TradeRecord {
   reason: string;
   signalType: SignalType;
   riskLevel: RiskLevel;
+  digit?: number;
 }
 
 export interface DailyStats {
@@ -61,6 +64,8 @@ export interface DailyStats {
   totalProfit: number;
   totalLoss: number;
   netPnl: number;
+  dailyPnL: number;
+  currentStreak: number;
 }
 
 export interface BotConfig {
@@ -71,7 +76,9 @@ export interface BotConfig {
   targetProfit: number;
   stopLoss: number;
   maxTrades: number;
+  maxDailyTrades: number;
   minConfidence: number;
+  confidenceThreshold: number;
   minTickInterval: number;
   maxConsecutiveLosses: number;
   maxDailyLoss: number;
@@ -80,7 +87,9 @@ export interface BotConfig {
 
   scanInterval: number;
   symbols: string[];
+  markets: string[];
   tradeTypes: ContractMode[];
+  strategies: string[];
   overUnderStrategy: boolean;
   overThreshold: number;
   underThreshold: number;
@@ -100,6 +109,8 @@ export interface MarketAnalysis {
   zScore: number;
   overUnderSignal: OverUnderSignal | null;
   timestamp: number;
+  dominantDigit: number;
+  digitFrequencies: [number, number][];
 }
 
 export interface PatternResult {
@@ -139,7 +150,9 @@ const DEFAULT_CONFIG: BotConfig = {
   targetProfit: 50,
   stopLoss: 100,
   maxTrades: 50,
+  maxDailyTrades: 50,
   minConfidence: 55,
+  confidenceThreshold: 55,
   minTickInterval: 1000,
   maxConsecutiveLosses: 5,
   maxDailyLoss: 200,
@@ -147,7 +160,9 @@ const DEFAULT_CONFIG: BotConfig = {
   duration: 5,
   scanInterval: 2000,
   symbols: [],
+  markets: [],
   tradeTypes: ['DIGITDIFF', 'DIGITMATCH', 'DIGITOVER', 'DIGITUNDER'],
+  strategies: ['hotspot', 'mean_reversion', 'trend_following', 'over_under'],
   overUnderStrategy: true,
   overThreshold: 2,
   underThreshold: 8,
@@ -181,6 +196,8 @@ export class AIBotEngine {
       totalProfit: 0,
       totalLoss: 0,
       netPnl: 0,
+      dailyPnL: 0,
+      currentStreak: 0,
     };
   }
 
@@ -201,6 +218,12 @@ export class AIBotEngine {
 
   updateConfig(updates: Partial<BotConfig>) {
     this.config = { ...this.config, ...updates };
+    if (updates.confidenceThreshold !== undefined) this.config.minConfidence = updates.confidenceThreshold;
+    if (updates.minConfidence !== undefined) this.config.confidenceThreshold = updates.minConfidence;
+    if (updates.maxDailyTrades !== undefined) this.config.maxTrades = updates.maxDailyTrades;
+    if (updates.maxTrades !== undefined) this.config.maxDailyTrades = updates.maxTrades;
+    if (updates.markets !== undefined) this.config.symbols = updates.markets;
+    if (updates.symbols !== undefined) this.config.markets = updates.symbols;
   }
 
   getConfig(): BotConfig {
@@ -299,12 +322,23 @@ export class AIBotEngine {
       this.dailyStats.wins++;
       this.dailyStats.totalProfit += profit;
       this.consecutiveLosses = 0;
+      if (this.dailyStats.currentStreak >= 0) {
+        this.dailyStats.currentStreak++;
+      } else {
+        this.dailyStats.currentStreak = 1;
+      }
     } else {
       this.dailyStats.losses++;
       this.dailyStats.totalLoss += Math.abs(profit);
       this.consecutiveLosses++;
+      if (this.dailyStats.currentStreak <= 0) {
+        this.dailyStats.currentStreak--;
+      } else {
+        this.dailyStats.currentStreak = -1;
+      }
     }
     this.dailyStats.netPnl = this.dailyStats.totalProfit - this.dailyStats.totalLoss;
+    this.dailyStats.dailyPnL = this.dailyStats.netPnl;
 
     this.addActivity({
       type: 'RESULT',
@@ -375,6 +409,9 @@ export class AIBotEngine {
     const zScore = this.calculateZScore(digitStats);
     const overUnderSignal = this.detectOverUnderSignal(digitStats, history);
 
+    const dominantDigit = digitStats.percentages.indexOf(Math.max(...digitStats.percentages));
+    const digitFrequencies: [number, number][] = digitStats.percentages.map((pct, idx) => [idx, pct]);
+
     const analysis: MarketAnalysis = {
       symbol,
       lastDigit,
@@ -389,6 +426,8 @@ export class AIBotEngine {
       zScore,
       overUnderSignal,
       timestamp: Date.now(),
+      dominantDigit,
+      digitFrequencies,
     };
 
     this.lastAnalysis.set(symbol, analysis);
@@ -555,6 +594,8 @@ export class AIBotEngine {
       riskLevel,
       recommendedStake: stake,
       reasonForEntry: reasons[0] || 'Statistical edge detected',
+      marketCondition: `${trend.direction} ${volatility.toFixed(4)} Vol`,
+      type: contractMode,
     };
 
     this.signals = [signal, ...this.signals].slice(0, 200);
@@ -600,6 +641,7 @@ export class AIBotEngine {
       reason: signal.reasonForEntry,
       signalType: signal.signalType,
       riskLevel: signal.riskLevel,
+      digit: signal.predictedDigit,
     };
     this.tradeHistory = [tradeRecord, ...this.tradeHistory].slice(0, 500);
 

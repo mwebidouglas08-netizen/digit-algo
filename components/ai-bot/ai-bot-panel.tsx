@@ -10,7 +10,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import type { BotConfig, BotActivity, TradeSignal, TradeRecord, DailyStats, MarketAnalysis } from './ai-bot-engine';
@@ -91,7 +90,7 @@ export function AIBotPanel({
   const formatCurrency = (val: number) => `$${val.toFixed(2)}`;
   const formatPct = (val: number) => `${val.toFixed(1)}%`;
   const winRate = tradeHistory.length > 0
-    ? (tradeHistory.filter(t => t.result === 'win').length / tradeHistory.length) * 100
+    ? (tradeHistory.filter(t => t.result === 'WIN').length / tradeHistory.length) * 100
     : 0;
   const pnl = tradeHistory.reduce((sum, t) => sum + (t.profit ?? 0), 0);
 
@@ -278,13 +277,13 @@ export function AIBotPanel({
                         getSignalBg(sig.confidence)
                       )}>
                         <div className="flex items-center gap-2 min-w-0">
-                          {getReasonIcon(sig.reason)}
+                          {getReasonIcon(sig.reasonForEntry)}
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5">
-                              <span className="font-bold text-base sm:text-lg">{sig.digit}</span>
-                              <Badge variant="outline" className="text-[10px] px-1">{sig.type}</Badge>
+                              <span className="font-bold text-base sm:text-lg">{sig.predictedDigit ?? '-'}</span>
+                              <Badge variant="outline" className="text-[10px] px-1">{sig.signalType}</Badge>
                             </div>
-                            <p className="text-[10px] sm:text-xs text-muted-foreground truncate">{sig.reason}</p>
+                            <p className="text-[10px] sm:text-xs text-muted-foreground truncate">{sig.reasonForEntry}</p>
                           </div>
                         </div>
                         <div className="text-right shrink-0">
@@ -314,22 +313,22 @@ export function AIBotPanel({
                     <CardContent className="p-3 sm:p-4">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-                          {getReasonIcon(sig.reason)}
+                          {getReasonIcon(sig.reasonForEntry)}
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                              <span className="text-xl sm:text-2xl font-bold">{sig.digit}</span>
-                              <Badge variant={sig.type === 'BUY' ? 'default' : 'secondary'} className="text-[10px] sm:text-xs">
-                                {sig.type}
+                              <span className="text-xl sm:text-2xl font-bold">{sig.predictedDigit ?? '-'}</span>
+                              <Badge variant={sig.signalType === 'BUY' || sig.signalType === 'STRONG_BUY' ? 'default' : 'secondary'} className="text-[10px] sm:text-xs">
+                                {sig.signalType}
                               </Badge>
-                              {sig.type === 'OVER' || sig.type === 'UNDER' ? (
-                                <Badge variant="outline" className="text-[10px] sm:text-xs">{sig.type} {sig.digit}</Badge>
+                              {sig.contractMode === 'DIGITOVER' || sig.contractMode === 'DIGITUNDER' ? (
+                                <Badge variant="outline" className="text-[10px] sm:text-xs">{sig.contractMode} {sig.predictedDigit ?? ''}</Badge>
                               ) : null}
                             </div>
-                            <p className="text-xs sm:text-sm text-muted-foreground mt-1">{sig.reason}</p>
+                            <p className="text-xs sm:text-sm text-muted-foreground mt-1">{sig.reasonForEntry}</p>
                             <div className="flex items-center gap-2 sm:gap-3 mt-1.5 sm:mt-2 text-[10px] sm:text-xs text-muted-foreground flex-wrap">
-                              <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {sig.timestamp.toLocaleTimeString()}</span>
+                              <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {new Date(sig.timestamp).toLocaleTimeString()}</span>
                               <span>{sig.symbol}</span>
-                              <span className="font-mono">{sig.marketCondition}</span>
+                              {sig.marketCondition && <span className="font-mono">{sig.marketCondition}</span>}
                             </div>
                           </div>
                         </div>
@@ -377,14 +376,14 @@ export function AIBotPanel({
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="flex items-center gap-1.5 sm:gap-2">
-                            <span className="font-bold">{trade.digit}</span>
-                            <Badge variant={trade.result === 'win' ? 'default' : 'destructive'} className="text-[10px]">
+                            <span className="font-bold">{trade.digit ?? '-'}</span>
+                            <Badge variant={trade.result === 'WIN' ? 'default' : 'destructive'} className="text-[10px]">
                               {trade.result}
                             </Badge>
-                            <Badge variant="outline" className="text-[10px]">{trade.type}</Badge>
+                            <Badge variant="outline" className="text-[10px]">{trade.contractMode}</Badge>
                           </div>
                           <div className="text-[10px] sm:text-xs text-muted-foreground mt-1 flex items-center gap-2">
-                            <span>{trade.timestamp.toLocaleTimeString()}</span>
+                            <span>{new Date(trade.timestamp).toLocaleTimeString()}</span>
                             <span>{trade.symbol}</span>
                             <span>${trade.stake}</span>
                           </div>
