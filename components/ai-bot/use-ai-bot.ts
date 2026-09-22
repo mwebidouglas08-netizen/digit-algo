@@ -33,6 +33,9 @@ interface UseAIBotReturn {
   checkRules: (symbol: string, price: number, digitStats: DigitStats, pipSize?: number) => TradeSignal | null;
   checkEvenOdd: (symbol: string, digitStats: DigitStats) => TradeSignal | null;
   checkOver3Under6: (symbol: string, digitStats: DigitStats) => TradeSignal | null;
+  peekOver2: (symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats) => TradeSignal | null;
+  peekUnder8: (symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats) => TradeSignal | null;
+  ingestTick: (symbol: string, price: number, pipSize?: number) => void;
   prepareTrade: (signal: TradeSignal, balance: number) => { stake: number; willTrade: boolean; reason?: string };
   recordTradeResult: (tradeId: string, result: 'WIN' | 'LOSS', profit: number) => void;
   triggerEmergencyStop: () => void;
@@ -185,6 +188,25 @@ export function useAIBot(): UseAIBotReturn {
     return sig;
   }, [isRunning, syncState]);
 
+  // Peek without pushing history — for comprehensive scan across ALL volatility markets
+  const peekOver2 = useCallback((symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats): TradeSignal | null => {
+    if (!engineRef.current || !isRunning) return null;
+    const sig = engineRef.current.checkOver2Rule(symbol, lastDigit, secondLastDigit, digitStats);
+    if (sig) syncState();
+    return sig;
+  }, [isRunning, syncState]);
+  const peekUnder8 = useCallback((symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats): TradeSignal | null => {
+    if (!engineRef.current || !isRunning) return null;
+    const sig = engineRef.current.checkUnder8Rule(symbol, lastDigit, secondLastDigit, digitStats);
+    if (sig) syncState();
+    return sig;
+  }, [isRunning, syncState]);
+
+  const ingestTick = useCallback((symbol: string, price: number, pipSize: number = 2) => {
+    if (!engineRef.current) return;
+    engineRef.current.updatePriceHistory(symbol, price, pipSize);
+  }, []);
+
   const processTick = useCallback((symbol: string, price: number, digitStats: DigitStats, pipSize: number = 2): TradeSignal | null => {
     if (!engineRef.current || !isRunning) return null;
     engineRef.current.updatePriceHistory(symbol, price, pipSize);
@@ -268,7 +290,7 @@ export function useAIBot(): UseAIBotReturn {
   return {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
     lastAnalysis, emergencyStop, validation,
-    startBot, stopBot, updateConfig, processTick, checkRules, checkEvenOdd, checkOver3Under6, prepareTrade,
+    startBot, stopBot, updateConfig, processTick, checkRules, checkEvenOdd, checkOver3Under6, peekOver2, peekUnder8, ingestTick, prepareTrade,
     recordTradeResult, triggerEmergencyStop, resetEmergencyStop,
     clearActivities, clearSignals,
     verifyExpectedProfit, isRiskAcceptable, runBacktest, runValidation, getLastValidation, getDrawdown,

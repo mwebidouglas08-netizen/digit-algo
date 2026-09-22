@@ -10,7 +10,7 @@ import { useDerivWSContext } from '@/components/custom/deriv-ws-provider';
 import { cn } from '@/lib/utils';
 import type { ActiveSymbol, Tick, BuyResult } from '@deriv/core';
 import type { DigitStats, ContractMode, OpenPosition } from '@/lib/types';
-import { computeDigitStats } from '@/lib/digit-stats';
+import { computeDigitStats, getLastDigit } from '@/lib/digit-stats';
 
 interface AIBotControllerProps {
   activeSymbol: ActiveSymbol | null;
@@ -53,7 +53,7 @@ export function AIBotController({
   const {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
     lastAnalysis, emergencyStop, validation,
-    startBot, stopBot, updateConfig, processTick, checkRules, checkEvenOdd, checkOver3Under6, prepareTrade,
+    startBot, stopBot, updateConfig, processTick, checkRules, checkEvenOdd, checkOver3Under6, peekOver2, peekUnder8, ingestTick, prepareTrade,
     recordTradeResult, triggerEmergencyStop, resetEmergencyStop,
     isRiskAcceptable, runValidation, runBacktest, getDrawdown, runPeriodicValidation, getStrategyHealth,
   } = useAIBot();
@@ -154,13 +154,34 @@ export function AIBotController({
     // fallback to local ticks with real pipSize for early startup.
     const stats = digitStats.totalTicks >= 10 ? digitStats : computeDigitStats(ticks, pipSize);
 
-    // AI analyses all uploaded verified strategies + statistical — picks validated highest confidence
+    // AI analyses active market thoroughly, then scans ALL volatility markets for Over2/Under8 the moment conditions are met
     const sig = processTick(symbol, price, stats, pipSize);
     const ruleSignal = checkRules(symbol, price, stats, pipSize);
     const evenOddSignal = checkEvenOdd(symbol, stats);
     const over3Under6Signal = checkOver3Under6(symbol, stats);
-    const candidates = [sig, ruleSignal, evenOddSignal, over3Under6Signal].filter(Boolean) as (typeof sig)[];
-    // AI decision: select highest-confidence validated signal — never force when none meet threshold
+    let candidates = [sig, ruleSignal, evenOddSignal, over3Under6Signal].filter(Boolean) as (typeof sig)[];
+
+    // Comprehensive scan: evaluate Over2/Under8 on EVERY volatility market with real ticks — ensures no opportunity missed
+    for (const sym of symbols) {
+      if (sym.underlying_symbol === symbol) continue; // already evaluated as active
+      const t = allTicksRef.current.get(sym.underlying_symbol) ?? [];
+      if (t.length < 20) continue;
+      const ps = 2; // volatility indices pipSize is 2
+      const sStats = computeDigitStats(t, ps);
+      if (sStats.totalTicks < 20) continue;
+      const last = getLastDigit(t[t.length - 1], ps);
+      const prev = getLastDigit(t[t.length - 2], ps);
+      const o2 = peekOver2(sym.underlying_symbol, last, prev, sStats);
+      if (o2) candidates.push(o2);
+      const u8 = peekUnder8(sym.underlying_symbol, last, prev, sStats);
+      if (u8) candidates.push(u8);
+      // Even/Odd and Over3/Under6 also scanned if enabled
+      const eo = checkEvenOdd(sym.underlying_symbol, sStats);
+      if (eo) candidates.push(eo);
+      const o3 = checkOver3Under6(sym.underlying_symbol, sStats);
+      if (o3) candidates.push(o3);
+    }
+    // AI decision: select highest-confidence validated signal across ALL markets — never force when none meet threshold
     const bestSignal = candidates.length ? candidates.reduce((a, b) => (a!.confidence > b!.confidence ? a : b), candidates[0])! : null;
 
     if (bestSignal && config.autoTrade && !emergencyStop) {
@@ -169,10 +190,19 @@ export function AIBotController({
       if (!riskOk.ok) return;
       const check = prepareTrade(bestSignal, balance);
       if (check.willTrade) {
-        executeAutoBuy(bestSignal as { id: string; contractMode: ContractMode; predictedDigit?: number; recommendedStake: number; confidence: number });
+        // If best opportunity is on a different volatility market, switch first then execute — ensures Over/Under trades on favourable market immediately
+        if (bestSignal.symbol !== symbol) {
+          selectSymbol(bestSignal.symbol);
+          // Execute after symbol switch settles (proposal needs new symbol) — still within same favourable window
+          setTimeout(() => {
+            executeAutoBuy(bestSignal as { id: string; contractMode: ContractMode; predictedDigit?: number; recommendedStake: number; confidence: number });
+          }, 500);
+        } else {
+          executeAutoBuy(bestSignal as { id: string; contractMode: ContractMode; predictedDigit?: number; recommendedStake: number; confidence: number });
+        }
       }
     }
-  }, [isRunning, currentTick, activeSymbol, digitStats, pipSize, processTick, checkRules, checkEvenOdd, checkOver3Under6, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy, isRiskAcceptable]);
+  }, [isRunning, currentTick, activeSymbol, digitStats, pipSize, symbols, processTick, checkRules, checkEvenOdd, checkOver3Under6, peekOver2, peekUnder8, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy, isRiskAcceptable, selectSymbol]);
 
   // Multi-market scan: every scanInterval, look at REAL digit distribution across all
   // subscribed markets and auto-switch to the market with strongest edge.
@@ -214,12 +244,12 @@ export function AIBotController({
           const s = p.toFixed(ps);
           return parseInt(s[s.length - 1], 10);
         });
-        const lowEnabled = health.get('over2')?.enabled !== false;
-        const highEnabled = health.get('under8')?.enabled !== false;
+        const lowEnabled = config.over2Enabled && config.tradeMode !== 'evenOdd' && health.get('over2')?.enabled !== false;
+        const highEnabled = config.under8Enabled && config.tradeMode !== 'evenOdd' && health.get('under8')?.enabled !== false;
         const lowRun = lowEnabled && recentDigits.slice(-2).every(d => d <= 2) ? 5 : 0;
         const highRun = highEnabled && recentDigits.slice(-2).every(d => d >= 7) ? 5 : 0;
-        // Even/Odd parity streak bonus (uploaded verified)
-        const evenEnabled = health.get('evenOdd')?.enabled !== false;
+        // Even/Odd parity streak bonus — only if Even/Odd actually enabled (default off)
+        const evenEnabled = config.evenOddEnabled && config.tradeMode !== 'overUnder' && health.get('evenOdd')?.enabled !== false;
         let parityBonus = 0;
         if (evenEnabled && recentDigits.length >= 3) {
           const last3 = recentDigits.slice(-3);
@@ -262,6 +292,8 @@ export function AIBotController({
           ticks.push(tickData.quote);
           if (ticks.length > 200) ticks.shift();
           allTicksRef.current.set(sym, ticks);
+          // Keep AI engine history in sync for pip-accurate over/under analysis on ALL volatility markets
+          ingestTick(sym, tickData.quote, sym === activeSymbol?.underlying_symbol ? pipSize : 2);
         }
       }).then(result => {
         if (result.subscriptionId) subscriptionsRef.current.set(sym, result.unsubscribe);
