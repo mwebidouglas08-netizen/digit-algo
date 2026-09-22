@@ -266,6 +266,7 @@ export function DigitsView({
                 digitStats={digitStats}
                 symbols={symbols}
                 balance={activeAccount ? parseFloat(activeAccount.balance) : 0}
+                isConnected={isConnected}
               />
             )}
             <ThemeToggle />
@@ -289,6 +290,7 @@ export function DigitsView({
     currentTick,
     digitStats,
     symbols,
+    isConnected,
   ]);
 
   if (error) {
