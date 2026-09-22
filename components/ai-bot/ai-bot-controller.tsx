@@ -193,10 +193,11 @@ export function AIBotController({
         : null;
       for (const sym of symbols) {
         const symName = sym.underlying_symbol;
-        // Filter by user-selected markets (e.g., 'Volatility 100' matches display_name)
-        if (allowed && !allowed.has(sym.display_name?.toLowerCase() ?? '') && !allowed.has(symName.toLowerCase())) {
+        // Filter by user-selected markets (e.g., 'Volatility 100' matches underlying_symbol_name)
+        const displayLower = (sym.underlying_symbol_name ?? sym.submarket_display_name ?? sym.market_display_name ?? '').toLowerCase();
+        if (allowed && !allowed.has(displayLower) && !allowed.has(symName.toLowerCase())) {
           // also allow by underlying symbol prefix match (R_100 etc.)
-          const match = Array.from(allowed).some(a => symName.toLowerCase().includes(a.replace(/\s+/g, '').toLowerCase()) || sym.display_name?.toLowerCase().includes(a));
+          const match = Array.from(allowed).some(a => symName.toLowerCase().includes(a.replace(/\s+/g, '').toLowerCase()) || displayLower.includes(a));
           if (!match) continue;
         }
         const ticks = allTicksRef.current.get(symName) ?? [];
