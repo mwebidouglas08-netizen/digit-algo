@@ -13,7 +13,7 @@ interface UseAIBotReturn {
   startBot: (symbols: string[]) => void;
   stopBot: () => void;
   updateConfig: (config: Partial<BotConfig>) => void;
-  analyzeMarket: (symbol: string, digitStats: DigitStats, lastDigit: number) => MarketAnalysis;
+  analyzeMarket: (symbol: string, digitStats: DigitStats, lastDigit: number) => MarketAnalysis | null;
   processTick: (symbol: string, price: number, digitStats: DigitStats) => TradeSignal | null;
   clearActivities: () => void;
   clearSignals: () => void;
