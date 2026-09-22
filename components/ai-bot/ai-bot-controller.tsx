@@ -20,11 +20,7 @@ interface AIBotControllerProps {
   balance?: number;
   isConnected?: boolean;
   onBuy: () => void;
-  setContractMode: (mode: ContractMode) => void;
-  setSelectedDigit: (digit: number) => void;
-  setStake: (value: string) => void;
-  stake?: number;
-  duration?: number;
+  autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number }) => Promise<boolean>;
 }
 
 export function AIBotController({
@@ -34,10 +30,7 @@ export function AIBotController({
   symbols,
   balance = 0,
   isConnected = false,
-  onBuy,
-  setContractMode,
-  setSelectedDigit,
-  setStake,
+  autoBuy,
 }: AIBotControllerProps) {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [tickCount, setTickCount] = useState(0);
@@ -46,7 +39,6 @@ export function AIBotController({
   const allTicksRef = useRef<Map<string, number[]>>(new Map());
   const subscriptionsRef = useRef<Map<string, () => void>>(new Map());
   const buyCooldownRef = useRef(false);
-  const lastPricesRef = useRef<Map<string, number>>(new Map());
 
   const {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
@@ -65,32 +57,35 @@ export function AIBotController({
     startBot(finalSymbols);
   }, [symbols, startBot]);
 
-  const executeAutoBuy = useCallback((signal?: { contractMode: string; predictedDigit?: number; recommendedStake: number }) => {
+  const executeAutoBuy = useCallback(async (signal: { contractMode: ContractMode; predictedDigit?: number; recommendedStake: number }) => {
     if (buyCooldownRef.current) return;
     buyCooldownRef.current = true;
 
-    if (signal) {
-      if (signal.contractMode === 'DIGITOVER') {
-        setContractMode('DIGITOVER');
-        setSelectedDigit(2);
-      } else if (signal.contractMode === 'DIGITUNDER') {
-        setContractMode('DIGITUNDER');
-        setSelectedDigit(8);
-      } else if (signal.contractMode === 'DIGITMATCH') {
-        setContractMode('DIGITMATCH');
-        setSelectedDigit(signal.predictedDigit ?? 5);
-      } else if (signal.contractMode === 'DIGITDIFF') {
-        setContractMode('DIGITDIFF');
-        setSelectedDigit(signal.predictedDigit ?? 5);
-      }
-      setStake(String(Math.min(signal.recommendedStake, 10)));
+    let digit = 5;
+    let contractMode: ContractMode = 'DIGITDIFF';
+
+    if (signal.contractMode === 'DIGITOVER') {
+      contractMode = 'DIGITOVER';
+      digit = 2;
+    } else if (signal.contractMode === 'DIGITUNDER') {
+      contractMode = 'DIGITUNDER';
+      digit = 8;
+    } else if (signal.contractMode === 'DIGITMATCH') {
+      contractMode = 'DIGITMATCH';
+      digit = signal.predictedDigit ?? 5;
+    } else if (signal.contractMode === 'DIGITDIFF') {
+      contractMode = 'DIGITDIFF';
+      digit = signal.predictedDigit ?? 5;
     }
 
-    setTimeout(() => {
-      onBuy();
-      setTimeout(() => { buyCooldownRef.current = false; }, 3000);
-    }, 1000);
-  }, [onBuy, setContractMode, setSelectedDigit, setStake]);
+    const success = await autoBuy({
+      contractMode,
+      digit,
+      stakeAmount: Math.min(signal.recommendedStake, config.stake),
+    });
+
+    setTimeout(() => { buyCooldownRef.current = false; }, 3000);
+  }, [autoBuy, config.stake]);
 
   useEffect(() => {
     if (!isRunning || !currentTick || !activeSymbol) return;
@@ -122,8 +117,6 @@ export function AIBotController({
         executeAutoBuy(sig);
       }
     }
-
-    lastPricesRef.current.set(symbol, price);
   }, [isRunning, currentTick, activeSymbol, processTick, checkRules, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy]);
 
   useEffect(() => {

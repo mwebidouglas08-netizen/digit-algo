@@ -100,6 +100,7 @@ export interface DigitsViewProps {
   proposal: ProposalInfo | null;
   isProposalLoading: boolean;
   buyContract: () => Promise<void>;
+  autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number }) => Promise<boolean>;
   isBuying: boolean;
   buyResult: BuyResult | null;
   buyError: string | null;
@@ -159,6 +160,7 @@ export function DigitsView({
   proposal,
   isProposalLoading,
   buyContract,
+  autoBuy,
   isBuying,
   buyResult,
   buyError,
@@ -268,11 +270,7 @@ export function DigitsView({
                 balance={activeAccount ? parseFloat(activeAccount.balance) : 0}
                 isConnected={isConnected}
                 onBuy={handleBuy}
-                setContractMode={setContractMode}
-                setSelectedDigit={setSelectedDigit}
-                setStake={setStake}
-                stake={parseFloat(stake) || 1}
-                duration={duration}
+                autoBuy={autoBuy}
               />
             )}
             <ThemeToggle />

@@ -47,6 +47,7 @@ interface UseDigitsTradingReturn {
   proposal: ProposalInfo | null;
   isProposalLoading: boolean;
   buyContract: () => Promise<void>;
+  autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number }) => Promise<boolean>;
   isBuying: boolean;
   buyResult: BuyResult | null;
   buyError: string | null;
@@ -160,6 +161,23 @@ export function useDigitsTrading({ ws, isConnected, isExhausted, isAuthenticated
     }
   }, [proposal, buyWithProposal]);
 
+  const autoBuy = useCallback(async (params: { contractMode: ContractMode; digit: number; stakeAmount: number }) => {
+    setContractMode(params.contractMode);
+    setSelectedDigit(params.digit);
+    setStake(String(Math.min(params.stakeAmount, 10)));
+
+    const maxWait = 5000;
+    const start = Date.now();
+    while (Date.now() - start < maxWait) {
+      if (proposal && !isBuying) {
+        await buyWithProposal(proposal);
+        return true;
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+    return false;
+  }, [proposal, isBuying, buyWithProposal, setContractMode, setSelectedDigit, setStake]);
+
   return {
     isConnected,
     isLoading,
@@ -187,6 +205,7 @@ export function useDigitsTrading({ ws, isConnected, isExhausted, isAuthenticated
     proposal,
     isProposalLoading: isConnected && proposalParams !== null && proposal === null,
     buyContract,
+    autoBuy,
     isBuying,
     buyResult,
     buyError,
