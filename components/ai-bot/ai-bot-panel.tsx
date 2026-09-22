@@ -267,8 +267,8 @@ export function AIBotPanel({
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground">Auto-trade DIGITOVER 2 when last 2 digits are 0 or 1</p>
-                      {strategyHealth?.get('over2')?.suspendedReason && <p className="text-[11px] text-red-500 mt-1">{strategyHealth.get('over2')?.suspendedReason} • {((strategyHealth.get('over2')?.winRate ?? 0)*100).toFixed(1)}% ({strategyHealth.get('over2')?.trades ?? 0}) PF {(strategyHealth.get('over2')?.profitFactor ?? 0).toFixed(2)}</p>}
-                      {(strategyHealth?.get('over2')?.enabled !== false && (strategyHealth?.get('over2')?.trades ?? 0) > 0) && <p className="text-[11px] text-muted-foreground mt-1">Live: {((strategyHealth.get('over2')?.winRate ?? 0)*100).toFixed(1)}% ({strategyHealth.get('over2')?.trades ?? 0}) PF {(strategyHealth.get('over2')?.profitFactor ?? 0).toFixed(2)}</p>}
+                      {strategyHealth?.get('over2')?.suspendedReason && <p className="text-[11px] text-red-500 mt-1">{strategyHealth?.get('over2')?.suspendedReason} • {((strategyHealth?.get('over2')?.winRate ?? 0)*100).toFixed(1)}% ({strategyHealth?.get('over2')?.trades ?? 0}) PF {(strategyHealth?.get('over2')?.profitFactor ?? 0).toFixed(2)}</p>}
+                      {(strategyHealth?.get('over2')?.enabled !== false && (strategyHealth?.get('over2')?.trades ?? 0) > 0) && <p className="text-[11px] text-muted-foreground mt-1">Live: {((strategyHealth?.get('over2')?.winRate ?? 0)*100).toFixed(1)}% ({strategyHealth?.get('over2')?.trades ?? 0}) PF {(strategyHealth?.get('over2')?.profitFactor ?? 0).toFixed(2)}</p>}
                     </CardContent>
                   </Card>
                 )}
@@ -285,15 +285,15 @@ export function AIBotPanel({
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground">Auto-trade DIGITUNDER 8 when last 2 digits are 8 or 9 and combined freq &lt; 10%</p>
-                      {strategyHealth?.get('under8')?.suspendedReason && <p className="text-[11px] text-red-500 mt-1">{strategyHealth.get('under8')?.suspendedReason} • {((strategyHealth.get('under8')?.winRate ?? 0)*100).toFixed(1)}% ({strategyHealth.get('under8')?.trades ?? 0}) PF {(strategyHealth.get('under8')?.profitFactor ?? 0).toFixed(2)}</p>}
-                      {(strategyHealth?.get('under8')?.enabled !== false && (strategyHealth?.get('under8')?.trades ?? 0) > 0) && <p className="text-[11px] text-muted-foreground mt-1">Live: {((strategyHealth.get('under8')?.winRate ?? 0)*100).toFixed(1)}% ({strategyHealth.get('under8')?.trades ?? 0}) PF {(strategyHealth.get('under8')?.profitFactor ?? 0).toFixed(2)}</p>}
+                      {strategyHealth?.get('under8')?.suspendedReason && <p className="text-[11px] text-red-500 mt-1">{strategyHealth?.get('under8')?.suspendedReason} • {((strategyHealth?.get('under8')?.winRate ?? 0)*100).toFixed(1)}% ({strategyHealth?.get('under8')?.trades ?? 0}) PF {(strategyHealth?.get('under8')?.profitFactor ?? 0).toFixed(2)}</p>}
+                      {(strategyHealth?.get('under8')?.enabled !== false && (strategyHealth?.get('under8')?.trades ?? 0) > 0) && <p className="text-[11px] text-muted-foreground mt-1">Live: {((strategyHealth?.get('under8')?.winRate ?? 0)*100).toFixed(1)}% ({strategyHealth?.get('under8')?.trades ?? 0}) PF {(strategyHealth?.get('under8')?.profitFactor ?? 0).toFixed(2)}</p>}
                     </CardContent>
                   </Card>
                 )}
               </div>
               {strategyHealth?.get('stat')?.enabled === false && (
                 <Card className="bg-red-500/5 border-red-500/30">
-                  <CardContent className="p-2.5 text-[11px] text-red-600">Stat strategy suspended: {strategyHealth.get('stat')?.suspendedReason} — bot will stay inactive on statistical signals until OOS re-validates (auto every 90s).</CardContent>
+                  <CardContent className="p-2.5 text-[11px] text-red-600">Stat strategy suspended: {strategyHealth?.get('stat')?.suspendedReason} — bot will stay inactive on statistical signals until OOS re-validates (auto every 90s).</CardContent>
                 </Card>
               )}
 
