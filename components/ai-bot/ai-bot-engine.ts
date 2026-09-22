@@ -144,14 +144,14 @@ const generateId = (): string => Math.random().toString(36).substring(2, 11);
 
 const DEFAULT_CONFIG: BotConfig = {
   enabled: false,
-  autoTrade: false,
+  autoTrade: true,
   stake: 10,
   targetProfit: 50,
   stopLoss: 100,
   maxTrades: 50,
   maxDailyTrades: 50,
-  minConfidence: 55,
-  confidenceThreshold: 55,
+  minConfidence: 40,
+  confidenceThreshold: 40,
   minTickInterval: 1000,
   maxConsecutiveLosses: 5,
   maxDailyLoss: 200,
@@ -327,12 +327,12 @@ export class AIBotEngine {
 
   checkOver2Rule(symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats): TradeSignal | null {
     if (!this.config.over2Enabled) return null;
-    if (lastDigit > 2 || secondLastDigit > 2) return null;
+    if (lastDigit > 1 || secondLastDigit > 1) return null;
 
-    const confidence = 85;
+    const confidence = 88;
     const stake = Math.min(this.config.stake, this.config.stake);
     const recentTicks = this.priceHistory.get(symbol)?.slice(-10) ?? [];
-    const reasons = [`Over 2: Last two digits are ${secondLastDigit} then ${lastDigit} (both ≤ 2)`];
+    const reasons = [`Over 2: Last two digits are ${secondLastDigit} then ${lastDigit} (both ≤ 1)`];
 
     const signal: TradeSignal = {
       id: generateId(),
@@ -493,8 +493,8 @@ export class AIBotEngine {
     else riskLevel = 'EXTREME';
 
     let signalType: SignalType;
-    if (confidence >= this.config.minConfidence && confidence >= 55) signalType = confidence >= 75 ? 'STRONG_BUY' : 'BUY';
-    else if (confidence >= 45) signalType = 'WAIT';
+    if (confidence >= 45) signalType = confidence >= 70 ? 'STRONG_BUY' : 'BUY';
+    else if (confidence >= 35) signalType = 'WAIT';
     else signalType = 'SELL';
 
     if (signalType === 'WAIT' || signalType === 'SELL') return null;
@@ -525,8 +525,8 @@ export class AIBotEngine {
     if (signal.confidence < this.config.minConfidence) {
       return { stake: 0, willTrade: false, reason: `Confidence ${signal.confidence.toFixed(1)}% below threshold` };
     }
-    const stake = Math.min(signal.recommendedStake, this.config.stake, balance * 0.05);
-    if (stake < 1) return { stake: 0, willTrade: false, reason: 'Insufficient balance' };
+    const stake = Math.min(signal.recommendedStake, this.config.stake, balance * 0.1);
+    if (stake < 0.35) return { stake: 0, willTrade: false, reason: 'Insufficient balance' };
 
     this.lastTradeTime = Date.now();
     const tradeRecord: TradeRecord = {

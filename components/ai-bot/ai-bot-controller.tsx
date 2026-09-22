@@ -19,7 +19,6 @@ interface AIBotControllerProps {
   symbols: ActiveSymbol[];
   balance?: number;
   isConnected?: boolean;
-  onBuy: () => void;
   autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number }) => Promise<boolean>;
 }
 
@@ -101,20 +100,16 @@ export function AIBotController({
 
     const stats = computeDigitStats(ticks, 2);
 
-    const ruleSignal = checkRules(symbol, price, stats);
-    if (ruleSignal && config.autoTrade && !emergencyStop) {
-      const check = prepareTrade(ruleSignal, balance);
-      if (check.willTrade) {
-        executeAutoBuy(ruleSignal);
-      }
-      return;
-    }
-
     const sig = processTick(symbol, price, stats);
-    if (sig && config.autoTrade && !emergencyStop) {
-      const check = prepareTrade(sig, balance);
+
+    const ruleSignal = checkRules(symbol, price, stats);
+
+    const bestSignal = ruleSignal && ruleSignal.confidence > (sig?.confidence ?? 0) ? ruleSignal : sig;
+
+    if (bestSignal && config.autoTrade && !emergencyStop) {
+      const check = prepareTrade(bestSignal, balance);
       if (check.willTrade) {
-        executeAutoBuy(sig);
+        executeAutoBuy(bestSignal);
       }
     }
   }, [isRunning, currentTick, activeSymbol, processTick, checkRules, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy]);

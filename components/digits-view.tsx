@@ -269,7 +269,6 @@ export function DigitsView({
                 symbols={symbols}
                 balance={activeAccount ? parseFloat(activeAccount.balance) : 0}
                 isConnected={isConnected}
-                onBuy={handleBuy}
                 autoBuy={autoBuy}
               />
             )}

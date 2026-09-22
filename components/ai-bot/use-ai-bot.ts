@@ -38,14 +38,14 @@ export function useAIBot(): UseAIBotReturn {
   const [isRunning, setIsRunning] = useState(false);
   const [config, setConfig] = useState<BotConfig>({
     enabled: false,
-    autoTrade: false,
+    autoTrade: true,
     stake: 10,
     targetProfit: 50,
     stopLoss: 100,
     maxTrades: 50,
     maxDailyTrades: 50,
-    minConfidence: 55,
-    confidenceThreshold: 55,
+    minConfidence: 40,
+    confidenceThreshold: 40,
     minTickInterval: 1000,
     maxConsecutiveLosses: 5,
     maxDailyLoss: 200,
@@ -83,6 +83,12 @@ export function useAIBot(): UseAIBotReturn {
     });
     return () => { engineRef.current?.stop(); };
   }, []);
+
+  useEffect(() => {
+    if (engineRef.current) {
+      engineRef.current.updateConfig(config);
+    }
+  }, [config]);
 
   const syncState = useCallback(() => {
     if (!engineRef.current) return;

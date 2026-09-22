@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import {
   useProposal,
   useBuy,
@@ -155,6 +155,11 @@ export function useDigitsTrading({ ws, isConnected, isExhausted, isAuthenticated
 
   const { proposal } = useProposal(tradingWs, tradingIsConnected, proposalParams);
 
+  const proposalRef = useRef(proposal);
+  const isBuyingRef = useRef(isBuying);
+  useEffect(() => { proposalRef.current = proposal; }, [proposal]);
+  useEffect(() => { isBuyingRef.current = isBuying; }, [isBuying]);
+
   const buyContract = useCallback(async () => {
     if (proposal) {
       await buyWithProposal(proposal);
@@ -166,17 +171,19 @@ export function useDigitsTrading({ ws, isConnected, isExhausted, isAuthenticated
     setSelectedDigit(params.digit);
     setStake(String(Math.min(params.stakeAmount, 10)));
 
-    const maxWait = 5000;
+    const maxWait = 8000;
     const start = Date.now();
     while (Date.now() - start < maxWait) {
-      if (proposal && !isBuying) {
-        await buyWithProposal(proposal);
+      const p = proposalRef.current;
+      const buying = isBuyingRef.current;
+      if (p && !buying) {
+        await buyWithProposal(p);
         return true;
       }
       await new Promise(r => setTimeout(r, 200));
     }
     return false;
-  }, [proposal, isBuying, buyWithProposal, setContractMode, setSelectedDigit, setStake]);
+  }, [buyWithProposal, setContractMode, setSelectedDigit, setStake]);
 
   return {
     isConnected,
