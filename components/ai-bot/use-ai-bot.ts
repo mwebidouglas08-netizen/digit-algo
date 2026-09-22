@@ -43,6 +43,9 @@ interface UseAIBotReturn {
   runValidation: (symbol?: string) => ValidationResult | null;
   getLastValidation: () => ValidationResult | null;
   getDrawdown: () => { current: number; max: number; peak: number };
+  getStrategyHealth: () => Map<string, { enabled: boolean; suspendedReason?: string; winRate: number; trades: number; profitFactor: number }>;
+  adaptParametersWithValidation: (symbol?: string) => boolean;
+  runPeriodicValidation: (symbol?: string) => ValidationResult | null;
 }
 
 export function useAIBot(): UseAIBotReturn {
@@ -219,6 +222,23 @@ export function useAIBot(): UseAIBotReturn {
   }, [syncState]);
   const getLastValidation = useCallback(() => engineRef.current?.getLastValidation() ?? null, []);
   const getDrawdown = useCallback(() => engineRef.current?.getDrawdown() ?? { current: 0, max: 0, peak: 0 }, []);
+  const getStrategyHealth = useCallback(() => engineRef.current?.getStrategyHealth() ?? new Map(), []);
+  const adaptParametersWithValidation = useCallback((symbol?: string) => {
+    if (!engineRef.current) return false;
+    const ok = engineRef.current.adaptParametersWithValidation(symbol);
+    syncState();
+    return ok;
+  }, [syncState]);
+  const runPeriodicValidation = useCallback((symbol?: string) => {
+    if (!engineRef.current) return null;
+    if (!engineRef.current.shouldRunPeriodicValidation()) return engineRef.current.getLastValidation();
+    const r = engineRef.current.runPeriodicValidation(symbol);
+    if (r) setValidation(r);
+    // Try disciplined adaptation only when supported by OOS gain
+    engineRef.current.adaptParametersWithValidation(symbol);
+    syncState();
+    return r;
+  }, [syncState]);
 
   return {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
@@ -227,5 +247,6 @@ export function useAIBot(): UseAIBotReturn {
     recordTradeResult, triggerEmergencyStop, resetEmergencyStop,
     clearActivities, clearSignals,
     verifyExpectedProfit, isRiskAcceptable, runBacktest, runValidation, getLastValidation, getDrawdown,
+    getStrategyHealth, adaptParametersWithValidation, runPeriodicValidation,
   };
 }

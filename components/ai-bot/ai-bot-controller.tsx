@@ -55,7 +55,7 @@ export function AIBotController({
     lastAnalysis, emergencyStop, validation,
     startBot, stopBot, updateConfig, processTick, checkRules, prepareTrade,
     recordTradeResult, triggerEmergencyStop, resetEmergencyStop,
-    isRiskAcceptable, runValidation, runBacktest, getDrawdown,
+    isRiskAcceptable, runValidation, runBacktest, getDrawdown, runPeriodicValidation, getStrategyHealth,
   } = useAIBot();
 
   useEffect(() => { setMounted(true); }, []);
@@ -135,6 +135,15 @@ export function AIBotController({
     setTimeout(() => { buyCooldownRef.current = false; }, 1500);
   }, [autoBuy, config.stake, config.duration, isConnected, isRiskAcceptable, balance]);
 
+  // Periodic AI validation: backtest + OOS + health check every ~90s while running — keeps strategies effective as market changes
+  useEffect(() => {
+    if (!isRunning || !isConnected) return;
+    const id = setInterval(() => {
+      runPeriodicValidation(activeSymbol?.underlying_symbol);
+    }, 90_000);
+    return () => clearInterval(id);
+  }, [isRunning, isConnected, activeSymbol, runPeriodicValidation]);
+
   useEffect(() => {
     if (!isRunning || !currentTick || !activeSymbol) return;
     // Real-time sync guard: skip stale ticks (>3s old) — prevents trading on delayed data
@@ -183,6 +192,7 @@ export function AIBotController({
       let bestSymbol: string | null = null;
       let bestScore = 0;
 
+      const health = getStrategyHealth();
       for (const sym of symbols) {
         const symName = sym.underlying_symbol;
         const ticks = allTicksRef.current.get(symName) ?? [];
@@ -194,13 +204,15 @@ export function AIBotController({
         const maxPct = Math.max(...stats.percentages);
         const minPct = Math.min(...stats.percentages);
         const deviation = Math.max(maxPct - 10, 10 - minPct);
-        // Bonus if recent digits favour an assured strategy
+        // Bonus if recent digits favour an assured *and still-validated* strategy
         const recentDigits = ticks.slice(-5).map(p => {
           const s = p.toFixed(ps);
           return parseInt(s[s.length - 1], 10);
         });
-        const lowRun = recentDigits.slice(-2).every(d => d <= 2) ? 5 : 0;
-        const highRun = recentDigits.slice(-2).every(d => d >= 7) ? 5 : 0;
+        const lowEnabled = health.get('over2')?.enabled !== false;
+        const highEnabled = health.get('under8')?.enabled !== false;
+        const lowRun = lowEnabled && recentDigits.slice(-2).every(d => d <= 2) ? 5 : 0;
+        const highRun = highEnabled && recentDigits.slice(-2).every(d => d >= 7) ? 5 : 0;
         const score = deviation + lowRun + highRun;
         if (score > bestScore && score >= 4) {
           bestScore = score;
@@ -249,6 +261,7 @@ export function AIBotController({
   }, [isRunning, ws, isConnected, symbols]);
 
   const drawdown = getDrawdown();
+  const strategyHealth = getStrategyHealth();
   const panelEl = mounted ? createPortal(
     <AIBotPanel
       isOpen={isPanelOpen}
@@ -274,6 +287,7 @@ export function AIBotController({
       drawdown={drawdown}
       onRunValidation={() => runValidation(activeSymbol?.underlying_symbol) ?? null}
       onRunBacktest={() => runBacktest(activeSymbol?.underlying_symbol) ?? null}
+      strategyHealth={strategyHealth}
     />,
     document.body
   ) : null;

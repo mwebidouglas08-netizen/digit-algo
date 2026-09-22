@@ -215,6 +215,12 @@ export class AIBotEngine {
   private peakPnl = 0;
   private maxDrawdown = 0;
   private lastValidation: ValidationResult | null = null;
+  private lastAutoValidationMs = 0;
+  private strategyHealth: Map<string, { enabled: boolean; suspendedReason?: string; winRate: number; trades: number; profitFactor: number }> = new Map([
+    ['over2', { enabled: true, winRate: 0, trades: 0, profitFactor: 0 }],
+    ['under8', { enabled: true, winRate: 0, trades: 0, profitFactor: 0 }],
+    ['stat', { enabled: true, winRate: 0, trades: 0, profitFactor: 0 }],
+  ]);
 
   constructor(config?: Partial<BotConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -316,6 +322,14 @@ export class AIBotEngine {
     if (balance > 0 && stake / balance > 0.05) return { ok: false, reason: `Risk too high: stake $${stake.toFixed(2)} >5% of balance $${balance.toFixed(2)}` };
     if (signal.riskLevel === 'EXTREME') return { ok: false, reason: 'Extreme risk signal blocked' };
     if (this.maxDrawdown > this.config.maxDailyLoss * 0.8) return { ok: false, reason: `Drawdown $${this.maxDrawdown.toFixed(2)} near limit` };
+    // Substantial live-fund gate: require validated strategy + demo history before large exposure
+    if (balance > 100) {
+      const settled = this.tradeHistory.filter(t => t.result !== 'PENDING').length;
+      if (!this.lastValidation || !this.lastValidation.isValid) {
+        if (settled < 20) return { ok: false, reason: `Live validation required: run backtest/OOS + 20 demo trades first (have ${settled})` };
+      }
+      if (this.lastValidation && !this.lastValidation.isValid) return { ok: false, reason: `Strategy not validated: ${this.lastValidation.reason} — demo only` };
+    }
     return { ok: true };
   }
 
@@ -410,6 +424,103 @@ export class AIBotEngine {
   getDrawdown(): { current: number; max: number; peak: number } {
     return { current: this.peakPnl - this.dailyStats.netPnl, max: this.maxDrawdown, peak: this.peakPnl };
   }
+  getStrategyHealth() { return new Map(this.strategyHealth); }
+  shouldRunPeriodicValidation(): boolean {
+    const now = Date.now();
+    if (now - this.lastAutoValidationMs < 90_000) return false; // at most every 90s
+    const total = this.priceHistory.get(this.config.symbols[0] ?? '')?.length ?? 0;
+    if (total < 80) return false;
+    if (this.tradeHistory.filter(t => t.result !== 'PENDING').length % 15 === 0 && this.tradeHistory.length > 0) return true;
+    return now - this.lastAutoValidationMs > 180_000;
+  }
+  runPeriodicValidation(symbol?: string): ValidationResult | null {
+    const res = this.runValidation(symbol);
+    this.lastAutoValidationMs = Date.now();
+    if (res) {
+      this.addActivity({ type: res.isValid ? 'INFO' : 'WARNING', message: `Periodic validation: ${res.reason} — ${res.isValid ? 'Strategies remain effective' : 'Unfavourable market, bot will stay inactive'}` });
+      this.updateStrategyHealthFromValidation(res);
+    }
+    return res;
+  }
+  private updateStrategyHealthFromValidation(v: ValidationResult) {
+    // If OOS not valid, don't disable outright — but mark stat strategy unreliable
+    const stat = this.strategyHealth.get('stat')!;
+    stat.winRate = v.oosWinRate;
+    stat.trades = v.outOfSample.totalTrades;
+    stat.profitFactor = v.oosProfitFactor;
+    if (!v.isValid && v.gap >= 0.15) {
+      stat.enabled = false;
+      stat.suspendedReason = `Overfit gap ${(v.gap*100).toFixed(1)}%`;
+    } else if (v.oosWinRate < 0.48) {
+      stat.enabled = false;
+      stat.suspendedReason = `OOS winRate ${(v.oosWinRate*100).toFixed(1)}%`;
+    } else {
+      stat.enabled = true;
+      stat.suspendedReason = undefined;
+    }
+    this.strategyHealth.set('stat', stat);
+  }
+
+  // Adapt only when change is supported by measurable OOS gain — no overfitting
+  adaptParametersWithValidation(symbol?: string): boolean {
+    const liveStats = this.getStrategyStats();
+    if (!liveStats || liveStats.count < 15) return false;
+    const baseValid = this.lastValidation;
+    if (!baseValid) return false;
+    const direction: 1 | -1 | 0 =
+      liveStats.winRate > 0.6 && this.config.minConfidence > 70 ? -1 : // loosen slightly when winning
+      liveStats.winRate < 0.48 && this.config.minConfidence < 82 ? 1 : 0; // tighten when losing
+    if (direction === 0) return false;
+    const step = 2 * direction;
+    const proposed = Math.max(70, Math.min(85, this.config.minConfidence + step));
+    if (proposed === this.config.minConfidence) return false;
+    const saved = this.config.minConfidence;
+    this.config.minConfidence = proposed;
+    this.config.confidenceThreshold = proposed;
+    const trial = this.runValidation(symbol);
+    // Revert if not measurably better or overfit
+    if (!trial || !trial.isValid || trial.oosProfitFactor <= baseValid.oosProfitFactor + 0.05) {
+      this.config.minConfidence = saved;
+      this.config.confidenceThreshold = saved;
+      this.lastValidation = baseValid;
+      return false;
+    }
+    this.lastValidation = trial;
+    this.updateStrategyHealthFromValidation(trial);
+    this.addActivity({ type: 'INFO', message: `Adapted minConfidence ${saved}% → ${proposed}% (OOS PF ${baseValid.oosProfitFactor.toFixed(2)} → ${trial.oosProfitFactor.toFixed(2)}) — validated` });
+    return true;
+  }
+  private refreshStrategyHealthFromLive() {
+    const byMode: Record<string, { wins: number; total: number; profit: number; loss: number }> = {};
+    for (const t of this.tradeHistory.filter(t => t.result !== 'PENDING').slice(0, 30)) {
+      const key = t.contractMode === 'DIGITOVER' ? 'over2' : t.contractMode === 'DIGITUNDER' ? 'under8' : 'stat';
+      if (!byMode[key]) byMode[key] = { wins: 0, total: 0, profit: 0, loss: 0 };
+      byMode[key].total++;
+      if (t.result === 'WIN') { byMode[key].wins++; byMode[key].profit += t.profit; }
+      else byMode[key].loss += Math.abs(t.profit);
+    }
+    for (const k of ['over2','under8','stat'] as const) {
+      const d = byMode[k];
+      const cur = this.strategyHealth.get(k)!;
+      if (!d || d.total < 8) continue;
+      const wr = d.wins / d.total;
+      const pf = d.loss ? d.profit / d.loss : wr > 0 ? 99 : 0;
+      cur.winRate = wr;
+      cur.trades = d.total;
+      cur.profitFactor = pf;
+      // Auto-reduce/suspend when unreliable — 3 strikes: suspend if winRate<40% or PF<0.85 over 8+ trades
+      if (wr < 0.4 && d.total >= 8) {
+        if (cur.enabled) this.addActivity({ type: 'WARNING', message: `Strategy ${k} suspended: winRate ${(wr*100).toFixed(1)}% over ${d.total} trades — remains inactive until validation improves` });
+        cur.enabled = false;
+        cur.suspendedReason = `Live winRate ${(wr*100).toFixed(1)}%`;
+      } else if (wr >= 0.52 && pf > 1.05 && !cur.enabled && cur.suspendedReason?.startsWith('Live')) {
+        cur.enabled = true;
+        cur.suspendedReason = undefined;
+        this.addActivity({ type: 'INFO', message: `Strategy ${k} re-enabled: recovered to ${(wr*100).toFixed(1)}% PF ${pf.toFixed(2)}` });
+      }
+      this.strategyHealth.set(k, cur);
+    }
+  }
 
   // Adaptive: recent win-rate per contractMode — bot learns which pattern is currently profitable
   private getStrategyStats() {
@@ -461,6 +572,8 @@ export class AIBotEngine {
     if (trade) { trade.result = result; trade.profit = profit; }
     this.resetDailyIfNeeded();
     this.dailyStats.totalTrades++;
+    // Refresh per-strategy health after each settled trade (disciplined, data-driven)
+    this.refreshStrategyHealthFromLive();
     if (result === 'WIN') {
       this.dailyStats.wins++;
       this.dailyStats.totalProfit += profit;
@@ -512,6 +625,7 @@ export class AIBotEngine {
 
   checkOver2Rule(symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats): TradeSignal | null {
     if (!this.config.over2Enabled) return null;
+    if (this.strategyHealth.get('over2')?.enabled === false) return null;
     if (lastDigit > 2 || secondLastDigit > 2) return null;
 
     const history = this.priceHistory.get(symbol) ?? [];
@@ -561,6 +675,7 @@ export class AIBotEngine {
 
   checkUnder8Rule(symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats): TradeSignal | null {
     if (!this.config.under8Enabled) return null;
+    if (this.strategyHealth.get('under8')?.enabled === false) return null;
     if (lastDigit < 7 || secondLastDigit < 7) return null;
 
     const history = this.priceHistory.get(symbol) ?? [];
@@ -641,6 +756,7 @@ export class AIBotEngine {
     const { symbol, digitStats, patterns, streaks, volatility, trend, chiSquare, entropy, zScore, overUnderSignal, lastPrice } = analysis;
 
     if (digitStats.totalTicks < 20) return null;
+    if (this.strategyHealth.get('stat')?.enabled === false) return null;
     // AI market opportunity filter — skip unfavourable random markets
     if (!this.isFavourableMarket(analysis)) return null;
 

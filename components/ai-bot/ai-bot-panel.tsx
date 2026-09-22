@@ -38,6 +38,7 @@ interface AIBotPanelProps {
   drawdown?: { current: number; max: number; peak: number };
   onRunValidation?: () => ValidationResult | null;
   onRunBacktest?: () => BacktestResult | null;
+  strategyHealth?: Map<string, { enabled: boolean; suspendedReason?: string; winRate: number; trades: number; profitFactor: number }>;
 }
 
 type Tab = 'dashboard' | 'signals' | 'history' | 'settings';
@@ -80,7 +81,7 @@ export function AIBotPanel({
   tradeHistory, dailyStats, lastAnalysis, emergencyStop,
   onStart, onStop, onUpdateConfig, onEmergencyStop, onResetEmergencyStop,
   balance, tickCount, currentSymbol, isConnected,
-  validation, drawdown, onRunValidation, onRunBacktest,
+  validation, drawdown, onRunValidation, onRunBacktest, strategyHealth,
 }: AIBotPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [settingsExpanded, setSettingsExpanded] = useState<Record<string, boolean>>({
@@ -252,30 +253,47 @@ export function AIBotPanel({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {config.over2Enabled && (
-                  <Card className="bg-yellow-500/5 border-yellow-500/30">
+                  <Card className={cn("border-yellow-500/30", strategyHealth?.get('over2')?.enabled === false ? "bg-red-500/5 border-red-500/30" : "bg-yellow-500/5")}>
                     <CardContent className="p-3">
                       <div className="flex items-center gap-2 mb-1">
                         <Minus className="h-4 w-4 text-yellow-500" />
                         <span className="text-sm font-bold text-yellow-500">Over 2 Strategy</span>
-                        <Badge variant="default" className="ml-auto text-[10px] bg-yellow-500">ACTIVE</Badge>
+                        {strategyHealth?.get('over2')?.enabled === false ? (
+                          <Badge variant="destructive" className="ml-auto text-[10px]">SUSPENDED</Badge>
+                        ) : (
+                          <Badge variant="default" className="ml-auto text-[10px] bg-yellow-500">ACTIVE</Badge>
+                        )}
                       </div>
                       <p className="text-xs text-muted-foreground">Auto-trade DIGITOVER 2 when last 2 digits are 0 or 1</p>
+                      {strategyHealth?.get('over2')?.suspendedReason && <p className="text-[11px] text-red-500 mt-1">{strategyHealth.get('over2')?.suspendedReason} • {(strategyHealth.get('over2')!.winRate*100).toFixed(1)}% ({strategyHealth.get('over2')!.trades}) PF {strategyHealth.get('over2')!.profitFactor.toFixed(2)}</p>}
+                      {strategyHealth?.get('over2')?.enabled !== false && strategyHealth?.get('over2')!.trades>0 && <p className="text-[11px] text-muted-foreground mt-1">Live: {(strategyHealth.get('over2')!.winRate*100).toFixed(1)}% ({strategyHealth.get('over2')!.trades}) PF {strategyHealth.get('over2')!.profitFactor.toFixed(2)}</p>}
                     </CardContent>
                   </Card>
                 )}
                 {config.under8Enabled && (
-                  <Card className="bg-purple-500/5 border-purple-500/30">
+                  <Card className={cn("border-purple-500/30", strategyHealth?.get('under8')?.enabled === false ? "bg-red-500/5 border-red-500/30" : "bg-purple-500/5")}>
                     <CardContent className="p-3">
                       <div className="flex items-center gap-2 mb-1">
                         <Plus className="h-4 w-4 text-purple-500" />
                         <span className="text-sm font-bold text-purple-500">Under 8 Strategy</span>
-                        <Badge variant="default" className="ml-auto text-[10px] bg-purple-500">ACTIVE</Badge>
+                        {strategyHealth?.get('under8')?.enabled === false ? (
+                          <Badge variant="destructive" className="ml-auto text-[10px]">SUSPENDED</Badge>
+                        ) : (
+                          <Badge variant="default" className="ml-auto text-[10px] bg-purple-500">ACTIVE</Badge>
+                        )}
                       </div>
                       <p className="text-xs text-muted-foreground">Auto-trade DIGITUNDER 8 when last 2 digits are 8 or 9 and combined freq &lt; 10%</p>
+                      {strategyHealth?.get('under8')?.suspendedReason && <p className="text-[11px] text-red-500 mt-1">{strategyHealth.get('under8')?.suspendedReason} • {(strategyHealth.get('under8')!.winRate*100).toFixed(1)}% ({strategyHealth.get('under8')!.trades}) PF {strategyHealth.get('under8')!.profitFactor.toFixed(2)}</p>}
+                      {strategyHealth?.get('under8')?.enabled !== false && strategyHealth?.get('under8')!.trades>0 && <p className="text-[11px] text-muted-foreground mt-1">Live: {(strategyHealth.get('under8')!.winRate*100).toFixed(1)}% ({strategyHealth.get('under8')!.trades}) PF {strategyHealth.get('under8')!.profitFactor.toFixed(2)}</p>}
                     </CardContent>
                   </Card>
                 )}
               </div>
+              {strategyHealth?.get('stat')?.enabled === false && (
+                <Card className="bg-red-500/5 border-red-500/30">
+                  <CardContent className="p-2.5 text-[11px] text-red-600">Stat strategy suspended: {strategyHealth.get('stat')?.suspendedReason} — bot will stay inactive on statistical signals until OOS re-validates (auto every 90s).</CardContent>
+                </Card>
+              )}
 
               {lastAnalysis && (
                 <Card className="bg-card/50 border-emerald-500/20">
