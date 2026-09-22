@@ -19,6 +19,7 @@ import { ConfigurableDigitsControls, ConfigurableBuyButton } from './configurabl
 import { TradeTypeChips } from '@/components/custom/trade-type-chips';
 import { SymbolSelector } from '@/components/custom/symbol-selector';
 import { ThemeToggle } from '@/components/custom/theme-toggle';
+import { AIBotController } from '@/components/ai-bot';
 import type {
   AuthState,
   DerivAccount,
@@ -256,7 +257,20 @@ export function DigitsView({
         logoSrc={logoSrc}
         appName={appName}
         showAppName={showAppName}
-        actions={<ThemeToggle />}
+        actions={
+          <div className="flex items-center gap-2">
+            {!editMode && (
+              <AIBotController
+                activeSymbol={activeSymbol}
+                currentTick={currentTick}
+                digitStats={digitStats}
+                symbols={symbols}
+                balance={activeAccount ? parseFloat(activeAccount.balance) : 0}
+              />
+            )}
+            <ThemeToggle />
+          </div>
+        }
       />
     );
   }, [
@@ -271,6 +285,10 @@ export function DigitsView({
     logoSrc,
     appName,
     showAppName,
+    activeSymbol,
+    currentTick,
+    digitStats,
+    symbols,
   ]);
 
   if (error) {
