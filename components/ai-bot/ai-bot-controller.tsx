@@ -94,6 +94,7 @@ export function AIBotController({
 
   const executeAutoBuy = useCallback(async (signal: { id: string; contractMode: ContractMode; predictedDigit?: number; recommendedStake: number }) => {
     if (buyCooldownRef.current) return;
+    if (!isConnected) return;
     buyCooldownRef.current = true;
     lastSignalRef.current = signal.id;
 
@@ -114,15 +115,19 @@ export function AIBotController({
       digit = signal.predictedDigit ?? 5;
     }
 
-    const success = await autoBuy({
-      contractMode,
-      digit,
-      stakeAmount: Math.min(signal.recommendedStake, config.stake),
-      duration: config.duration,
-    });
+    try {
+      await autoBuy({
+        contractMode,
+        digit,
+        stakeAmount: Math.min(signal.recommendedStake, config.stake),
+        duration: config.duration,
+      });
+    } catch {
+      // autoBuy errors surface via Deriv toast; keep loop alive
+    }
 
-    setTimeout(() => { buyCooldownRef.current = false; }, 3000);
-  }, [autoBuy, config.stake]);
+    setTimeout(() => { buyCooldownRef.current = false; }, 1500);
+  }, [autoBuy, config.stake, config.duration, isConnected]);
 
   useEffect(() => {
     if (!isRunning || !currentTick || !activeSymbol) return;
@@ -225,7 +230,10 @@ export function AIBotController({
       }).catch(() => {});
     });
 
-    return () => {};
+    return () => {
+      subscriptionsRef.current.forEach(unsub => { try { unsub(); } catch {} });
+      subscriptionsRef.current.clear();
+    };
   }, [isRunning, ws, isConnected, symbols]);
 
   const panelEl = mounted ? createPortal(

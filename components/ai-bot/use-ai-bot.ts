@@ -41,18 +41,18 @@ export function useAIBot(): UseAIBotReturn {
     enabled: false,
     autoTrade: true,
     stake: 1,
-    targetProfit: 20,
-    stopLoss: 30,
-    maxTrades: 30,
-    maxDailyTrades: 30,
+    targetProfit: 50,
+    stopLoss: 50,
+    maxTrades: 200,
+    maxDailyTrades: 200,
     minConfidence: 75,
     confidenceThreshold: 75,
-    minTickInterval: 2500,
-    maxConsecutiveLosses: 3,
-    maxDailyLoss: 30,
-    maxDailyProfit: 50,
+    minTickInterval: 1200,
+    maxConsecutiveLosses: 4,
+    maxDailyLoss: 100,
+    maxDailyProfit: 200,
     duration: 1,
-    scanInterval: 3000,
+    scanInterval: 1500,
     symbols: [],
     markets: [],
     tradeTypes: ['DIGITDIFF', 'DIGITMATCH', 'DIGITOVER', 'DIGITUNDER'],
@@ -134,7 +134,7 @@ export function useAIBot(): UseAIBotReturn {
 
     if (history.length >= 2) {
       const secondLastPrice = history[history.length - 2];
-      const secondLastDigit = parseInt(secondLastPrice.toFixed(2).slice(-1), 10);
+      const secondLastDigit = getLastDigit(secondLastPrice, pipSize);
 
       const under8Sig = engineRef.current.checkUnder8Rule(symbol, lastDigit, secondLastDigit, digitStats);
       if (under8Sig) { syncState(); return under8Sig; }

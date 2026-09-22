@@ -147,18 +147,18 @@ const DEFAULT_CONFIG: BotConfig = {
   enabled: false,
   autoTrade: true,
   stake: 1,
-  targetProfit: 20,
-  stopLoss: 30,
-  maxTrades: 30,
-  maxDailyTrades: 30,
+  targetProfit: 50,
+  stopLoss: 50,
+  maxTrades: 200,
+  maxDailyTrades: 200,
   minConfidence: 75,
   confidenceThreshold: 75,
-  minTickInterval: 2500,
-  maxConsecutiveLosses: 3,
-  maxDailyLoss: 30,
-  maxDailyProfit: 50,
+  minTickInterval: 1200,
+  maxConsecutiveLosses: 4,
+  maxDailyLoss: 100,
+  maxDailyProfit: 200,
   duration: 1,
-  scanInterval: 3000,
+  scanInterval: 1500,
   symbols: [],
   markets: [],
   tradeTypes: ['DIGITDIFF', 'DIGITMATCH', 'DIGITOVER', 'DIGITUNDER'],
@@ -265,6 +265,30 @@ export class AIBotEngine {
     return getLastDigit(price, this.getPipSize(symbol));
   }
 
+  // Adaptive: recent win-rate per contractMode — bot learns which pattern is currently profitable
+  private getStrategyStats() {
+    const last20 = this.tradeHistory.filter(t => t.result !== 'PENDING').slice(0, 20);
+    if (last20.length < 5) return null;
+    const wins = last20.filter(t => t.result === 'WIN').length;
+    const winRate = wins / last20.length;
+    const byMode: Record<string, { wins: number; total: number }> = {};
+    for (const t of last20) {
+      const m = t.contractMode;
+      if (!byMode[m]) byMode[m] = { wins: 0, total: 0 };
+      byMode[m].total++;
+      if (t.result === 'WIN') byMode[m].wins++;
+    }
+    return { winRate, byMode, count: last20.length };
+  }
+
+  private isFavourableMarket(analysis: MarketAnalysis): boolean {
+    // Favourable = low entropy (skewed) OR strong digit deviation OR clear over/under momentum
+    // Unfavourable = high entropy ~3.32 with no deviation = random walk, skip
+    if (analysis.entropy > 3.28 && Math.abs(analysis.chiSquare) < 5) return false;
+    if (analysis.volatility > 0.02) return false; // too wild, payouts slip
+    return true;
+  }
+
   start(symbols: string[]) {
     if (this.config.enabled) return;
     this.emergencyStop = false;
@@ -312,15 +336,15 @@ export class AIBotEngine {
 
     if (this.consecutiveLosses >= this.config.maxConsecutiveLosses) {
       this.config.autoTrade = false;
-      this.addActivity({ type: 'WARNING', message: `Auto-trade PAUSED: ${this.consecutiveLosses} consecutive losses.` });
+      this.addActivity({ type: 'WARNING', message: `Auto-trade PAUSED: ${this.consecutiveLosses} consecutive losses — press Reset to resume continuous trading.` });
     }
     if (this.dailyStats.netPnl <= -this.config.maxDailyLoss) {
       this.config.autoTrade = false;
-      this.addActivity({ type: 'WARNING', message: `Auto-trade PAUSED: Daily loss limit $${this.config.maxDailyLoss} reached.` });
+      this.addActivity({ type: 'WARNING', message: `Auto-trade PAUSED: Daily loss limit $${this.config.maxDailyLoss} reached — capital protection.` });
     }
+    // Continuous mode: profit target does NOT pause — bot keeps trading until you stop it
     if (this.dailyStats.netPnl >= this.config.maxDailyProfit) {
-      this.config.autoTrade = false;
-      this.addActivity({ type: 'INFO', message: `Auto-trade PAUSED: Daily profit target $${this.config.maxDailyProfit} reached!` });
+      this.addActivity({ type: 'INFO', message: `Daily profit target $${this.config.maxDailyProfit} reached — continuing (continuous mode). PnL: $${this.dailyStats.netPnl.toFixed(2)}` });
     }
   }
 
@@ -332,7 +356,7 @@ export class AIBotEngine {
     if (this.dailyStats.totalTrades >= this.config.maxTrades) return { allowed: false, reason: 'Max daily trades reached' };
     if (this.consecutiveLosses >= this.config.maxConsecutiveLosses) return { allowed: false, reason: 'Max consecutive losses reached' };
     if (this.dailyStats.netPnl <= -this.config.maxDailyLoss) return { allowed: false, reason: 'Daily loss limit reached' };
-    if (this.dailyStats.netPnl >= this.config.maxDailyProfit) return { allowed: false, reason: 'Daily profit target reached' };
+    // Do not block on profit — continuous mode runs until you press Stop
     return { allowed: true };
   }
 
@@ -466,7 +490,9 @@ export class AIBotEngine {
   generateSignal(analysis: MarketAnalysis, balance: number): TradeSignal | null {
     const { symbol, digitStats, patterns, streaks, volatility, trend, chiSquare, entropy, zScore, overUnderSignal, lastPrice } = analysis;
 
-    if (digitStats.totalTicks < 10) return null;
+    if (digitStats.totalTicks < 20) return null;
+    // AI market opportunity filter — skip unfavourable random markets
+    if (!this.isFavourableMarket(analysis)) return null;
 
     const history = this.priceHistory.get(symbol) ?? [];
     const pip = this.getPipSize(symbol);
@@ -591,12 +617,33 @@ export class AIBotEngine {
     else if (confidence >= 50) riskLevel = 'HIGH';
     else riskLevel = 'EXTREME';
 
+    // Adaptive threshold: if recent win-rate is poor, demand higher confidence
+    const strat = this.getStrategyStats();
+    const adaptiveMin = strat && strat.winRate < 0.5 && strat.count >= 8 ? 80 : this.config.minConfidence;
+    if (strat && strat.winRate < 0.45 && strat.count >= 10 && confidence < 85) {
+      return null; // be determinantly selective when losing
+    }
+
     let signalType: SignalType;
-    if (confidence >= 75) signalType = confidence >= 85 ? 'STRONG_BUY' : 'BUY';
+    if (confidence >= adaptiveMin) signalType = confidence >= 85 ? 'STRONG_BUY' : 'BUY';
     else if (confidence >= 60) signalType = 'WAIT';
     else signalType = 'SELL';
 
     if (signalType === 'WAIT' || signalType === 'SELL') return null;
+
+    // Favour contractModes that are currently winning
+    if (strat && contractMode === 'DIGITDIFF' && strat.byMode['DIGITOVER']) {
+      const over = strat.byMode['DIGITOVER'];
+      const diff = strat.byMode['DIGITDIFF'];
+      if (over && diff && over.total >= 3 && diff.total >= 3) {
+        const overWR = over.wins / over.total;
+        const diffWR = diff.wins / diff.total;
+        if (overWR > diffWR + 0.2 && overWR > 0.6) {
+          // keep over/under bias — don't dilute with diff
+          return null;
+        }
+      }
+    }
 
     const stake = Math.min(this.config.stake, balance * 0.05);
     const recentTicks = this.priceHistory.get(symbol)?.slice(-10) ?? [];
