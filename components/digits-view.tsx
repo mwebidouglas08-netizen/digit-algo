@@ -100,7 +100,7 @@ export interface DigitsViewProps {
   proposal: ProposalInfo | null;
   isProposalLoading: boolean;
   buyContract: () => Promise<void>;
-  autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number; duration?: number }) => Promise<boolean>;
+  autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number; duration?: number; confidence?: number }) => Promise<boolean>;
   isBuying: boolean;
   buyResult: BuyResult | null;
   buyError: string | null;

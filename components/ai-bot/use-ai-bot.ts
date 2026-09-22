@@ -9,6 +9,9 @@ import {
   type MarketAnalysis,
   type TradeRecord,
   type DailyStats,
+  type BacktestResult,
+  type ValidationResult,
+  type ProposalSnapshot,
 } from './ai-bot-engine';
 import type { DigitStats } from '@/lib/types';
 import { getLastDigit } from '@/lib/digit-stats';
@@ -22,6 +25,7 @@ interface UseAIBotReturn {
   dailyStats: DailyStats;
   lastAnalysis: MarketAnalysis | null;
   emergencyStop: boolean;
+  validation: ValidationResult | null;
   startBot: (symbols: string[]) => void;
   stopBot: () => void;
   updateConfig: (config: Partial<BotConfig>) => void;
@@ -33,6 +37,12 @@ interface UseAIBotReturn {
   resetEmergencyStop: () => void;
   clearActivities: () => void;
   clearSignals: () => void;
+  verifyExpectedProfit: (signal: TradeSignal, proposal: ProposalSnapshot, stake: number) => { ok: boolean; reason: string; expectedValue: number; profitIfWin: number };
+  isRiskAcceptable: (signal: TradeSignal, balance: number) => { ok: boolean; reason?: string };
+  runBacktest: (symbol?: string) => BacktestResult | null;
+  runValidation: (symbol?: string) => ValidationResult | null;
+  getLastValidation: () => ValidationResult | null;
+  getDrawdown: () => { current: number; max: number; peak: number };
 }
 
 export function useAIBot(): UseAIBotReturn {
@@ -72,6 +82,7 @@ export function useAIBot(): UseAIBotReturn {
   });
   const [lastAnalysis, setLastAnalysis] = useState<MarketAnalysis | null>(null);
   const [emergencyStop, setEmergencyStop] = useState(false);
+  const [validation, setValidation] = useState<ValidationResult | null>(null);
 
   const engineRef = useRef<AIBotEngine | null>(null);
   const priceHistoryRef = useRef<Map<string, number[]>>(new Map());
@@ -185,11 +196,36 @@ export function useAIBot(): UseAIBotReturn {
   const clearActivities = useCallback(() => setActivities([]), []);
   const clearSignals = useCallback(() => setSignals([]), []);
 
+  const verifyExpectedProfit = useCallback((signal: TradeSignal, proposal: ProposalSnapshot, stake: number) => {
+    if (!engineRef.current) return { ok: false, reason: 'Engine not ready', expectedValue: -999, profitIfWin: 0 };
+    return engineRef.current.verifyExpectedProfit(signal, proposal, stake);
+  }, []);
+  const isRiskAcceptable = useCallback((signal: TradeSignal, balance: number) => {
+    if (!engineRef.current) return { ok: false, reason: 'Engine not ready' };
+    return engineRef.current.isRiskAcceptable(signal, balance);
+  }, []);
+  const runBacktest = useCallback((symbol?: string) => {
+    if (!engineRef.current) return null;
+    const r = engineRef.current.runBacktest(symbol);
+    syncState();
+    return r;
+  }, [syncState]);
+  const runValidation = useCallback((symbol?: string) => {
+    if (!engineRef.current) return null;
+    const r = engineRef.current.runValidation(symbol);
+    if (r) setValidation(r);
+    syncState();
+    return r;
+  }, [syncState]);
+  const getLastValidation = useCallback(() => engineRef.current?.getLastValidation() ?? null, []);
+  const getDrawdown = useCallback(() => engineRef.current?.getDrawdown() ?? { current: 0, max: 0, peak: 0 }, []);
+
   return {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
-    lastAnalysis, emergencyStop,
+    lastAnalysis, emergencyStop, validation,
     startBot, stopBot, updateConfig, processTick, checkRules, prepareTrade,
     recordTradeResult, triggerEmergencyStop, resetEmergencyStop,
     clearActivities, clearSignals,
+    verifyExpectedProfit, isRiskAcceptable, runBacktest, runValidation, getLastValidation, getDrawdown,
   };
 }

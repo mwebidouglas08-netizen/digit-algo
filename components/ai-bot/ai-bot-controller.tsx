@@ -19,7 +19,7 @@ interface AIBotControllerProps {
   symbols: ActiveSymbol[];
   balance?: number;
   isConnected?: boolean;
-  autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number; duration?: number }) => Promise<boolean>;
+  autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number; duration?: number; confidence?: number }) => Promise<boolean>;
   buyResult: BuyResult | null;
   openPositions: OpenPosition[];
   selectSymbol: (symbol: string) => void;
@@ -52,9 +52,10 @@ export function AIBotController({
 
   const {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
-    lastAnalysis, emergencyStop,
+    lastAnalysis, emergencyStop, validation,
     startBot, stopBot, updateConfig, processTick, checkRules, prepareTrade,
     recordTradeResult, triggerEmergencyStop, resetEmergencyStop,
+    isRiskAcceptable, runValidation, runBacktest, getDrawdown,
   } = useAIBot();
 
   useEffect(() => { setMounted(true); }, []);
@@ -92,9 +93,12 @@ export function AIBotController({
     startBot(finalSymbols);
   }, [symbols, startBot]);
 
-  const executeAutoBuy = useCallback(async (signal: { id: string; contractMode: ContractMode; predictedDigit?: number; recommendedStake: number }) => {
+  const executeAutoBuy = useCallback(async (signal: { id: string; contractMode: ContractMode; predictedDigit?: number; recommendedStake: number; confidence: number }) => {
     if (buyCooldownRef.current) return;
     if (!isConnected) return;
+    // Pre-trade risk gate — remain inactive if risk exceeds threshold
+    const risk = isRiskAcceptable(signal as unknown as import('./ai-bot-engine').TradeSignal, balance);
+    if (!risk.ok) return;
     buyCooldownRef.current = true;
     lastSignalRef.current = signal.id;
 
@@ -116,21 +120,26 @@ export function AIBotController({
     }
 
     try {
+      // autoBuy now verifies expected profit (EV>0, payout>stake) before buying — no blind trades
       await autoBuy({
         contractMode,
         digit,
         stakeAmount: Math.min(signal.recommendedStake, config.stake),
         duration: config.duration,
+        confidence: signal.confidence,
       });
     } catch {
       // autoBuy errors surface via Deriv toast; keep loop alive
     }
 
     setTimeout(() => { buyCooldownRef.current = false; }, 1500);
-  }, [autoBuy, config.stake, config.duration, isConnected]);
+  }, [autoBuy, config.stake, config.duration, isConnected, isRiskAcceptable, balance]);
 
   useEffect(() => {
     if (!isRunning || !currentTick || !activeSymbol) return;
+    // Real-time sync guard: skip stale ticks (>3s old) — prevents trading on delayed data
+    const tickEpochMs = (currentTick.epoch ?? 0) * 1000;
+    if (tickEpochMs && Date.now() - tickEpochMs > 3000) return;
 
     const symbol = activeSymbol.underlying_symbol;
     const price = currentTick.quote;
@@ -152,12 +161,15 @@ export function AIBotController({
     const bestSignal = ruleSignal && ruleSignal.confidence > (sig?.confidence ?? 0) ? ruleSignal : sig;
 
     if (bestSignal && config.autoTrade && !emergencyStop) {
+      // Risk threshold: remain inactive if expected risk exceeds configured threshold
+      const riskOk = isRiskAcceptable(bestSignal as unknown as import('./ai-bot-engine').TradeSignal, balance);
+      if (!riskOk.ok) return;
       const check = prepareTrade(bestSignal, balance);
       if (check.willTrade) {
-        executeAutoBuy(bestSignal);
+        executeAutoBuy(bestSignal as { id: string; contractMode: ContractMode; predictedDigit?: number; recommendedStake: number; confidence: number });
       }
     }
-  }, [isRunning, currentTick, activeSymbol, digitStats, pipSize, processTick, checkRules, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy]);
+  }, [isRunning, currentTick, activeSymbol, digitStats, pipSize, processTick, checkRules, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy, isRiskAcceptable]);
 
   // Multi-market scan: every scanInterval, look at REAL digit distribution across all
   // subscribed markets and auto-switch to the market with strongest edge.
@@ -236,6 +248,7 @@ export function AIBotController({
     };
   }, [isRunning, ws, isConnected, symbols]);
 
+  const drawdown = getDrawdown();
   const panelEl = mounted ? createPortal(
     <AIBotPanel
       isOpen={isPanelOpen}
@@ -257,6 +270,10 @@ export function AIBotController({
       tickCount={tickCount}
       currentSymbol={activeSymbol?.underlying_symbol ?? null}
       isConnected={isConnected}
+      validation={validation}
+      drawdown={drawdown}
+      onRunValidation={() => runValidation(activeSymbol?.underlying_symbol) ?? null}
+      onRunBacktest={() => runBacktest(activeSymbol?.underlying_symbol) ?? null}
     />,
     document.body
   ) : null;

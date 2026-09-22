@@ -47,7 +47,7 @@ interface UseDigitsTradingReturn {
   proposal: ProposalInfo | null;
   isProposalLoading: boolean;
   buyContract: () => Promise<void>;
-  autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number; duration?: number }) => Promise<boolean>;
+  autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number; duration?: number; confidence?: number }) => Promise<boolean>;
   isBuying: boolean;
   buyResult: BuyResult | null;
   buyError: string | null;
@@ -166,7 +166,7 @@ export function useDigitsTrading({ ws, isConnected, isExhausted, isAuthenticated
     }
   }, [proposal, buyWithProposal]);
 
-  const autoBuy = useCallback(async (params: { contractMode: ContractMode; digit: number; stakeAmount: number; duration?: number }) => {
+  const autoBuy = useCallback(async (params: { contractMode: ContractMode; digit: number; stakeAmount: number; duration?: number; confidence?: number }) => {
     setContractMode(params.contractMode);
     setSelectedDigit(params.digit);
     setStake(String(Math.min(params.stakeAmount, 10)));
@@ -175,16 +175,27 @@ export function useDigitsTrading({ ws, isConnected, isExhausted, isAuthenticated
     const maxWait = 8000;
     const start = Date.now();
     while (Date.now() - start < maxWait) {
-      const p = proposalRef.current;
+      const p = proposalRef.current as unknown as { payout?: number; ask_price?: number; id?: string } | null;
       const buying = isBuyingRef.current;
-      if (p && !buying) {
-        await buyWithProposal(p);
+      if (p && !buying && p.payout !== undefined) {
+        // ── Pre-trade profit verification: never buy blindly ──
+        if (params.confidence !== undefined) {
+          const stakeNum = Math.min(params.stakeAmount, 10);
+          const payout = Number(p.payout);
+          const profitIfWin = payout - stakeNum;
+          const pWin = Math.min(0.95, Math.max(0.05, params.confidence / 100));
+          const expectedValue = pWin * profitIfWin - (1 - pWin) * stakeNum;
+          if (profitIfWin <= 0 || expectedValue <= 0 || payout / stakeNum < 1.1) {
+            return false; // verified not profitable — block careless loss
+          }
+        }
+        await buyWithProposal(p as unknown as ProposalInfo);
         return true;
       }
       await new Promise(r => setTimeout(r, 200));
     }
     return false;
-  }, [buyWithProposal, setContractMode, setSelectedDigit, setStake]);
+  }, [buyWithProposal, setContractMode, setSelectedDigit, setStake, setDuration]);
 
   return {
     isConnected,

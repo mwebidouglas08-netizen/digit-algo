@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import type { BotConfig, BotActivity, TradeSignal, TradeRecord, DailyStats, MarketAnalysis } from './ai-bot-engine';
+import type { BotConfig, BotActivity, TradeSignal, TradeRecord, DailyStats, MarketAnalysis, ValidationResult, BacktestResult } from './ai-bot-engine';
 
 interface AIBotPanelProps {
   isOpen: boolean;
@@ -34,6 +34,10 @@ interface AIBotPanelProps {
   tickCount: number;
   currentSymbol: string | null;
   isConnected: boolean;
+  validation?: ValidationResult | null;
+  drawdown?: { current: number; max: number; peak: number };
+  onRunValidation?: () => ValidationResult | null;
+  onRunBacktest?: () => BacktestResult | null;
 }
 
 type Tab = 'dashboard' | 'signals' | 'history' | 'settings';
@@ -76,6 +80,7 @@ export function AIBotPanel({
   tradeHistory, dailyStats, lastAnalysis, emergencyStop,
   onStart, onStop, onUpdateConfig, onEmergencyStop, onResetEmergencyStop,
   balance, tickCount, currentSymbol, isConnected,
+  validation, drawdown, onRunValidation, onRunBacktest,
 }: AIBotPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [settingsExpanded, setSettingsExpanded] = useState<Record<string, boolean>>({
@@ -196,6 +201,30 @@ export function AIBotPanel({
                   <p className="text-[11px] leading-snug text-muted-foreground">
                     <span className="font-semibold text-amber-600">Production mode:</span> Uses <span className="font-medium">real Deriv ticks</span> and your Settings (stake ${config.stake.toFixed(2)} • duration {config.duration} tick • min confidence {Math.round(config.confidenceThreshold*100)}%). No digit strategy can guarantee profit — digits are pseudo-random. Bot trades <span className="font-medium">only high-confidence</span> Assured setups (Over 2 / Under 8 ≥75%) and pauses on {config.maxConsecutiveLosses} consecutive losses or ${config.maxDailyLoss} daily loss. Expect wins <em>and</em> losses.
                   </p>
+                </CardContent>
+              </Card>
+              <Card className="bg-card/50 border-emerald-500/20">
+                <CardHeader className="p-3 pb-2">
+                  <CardTitle className="text-xs flex items-center gap-2">
+                    <BarChart3 className="h-3.5 w-3.5 text-emerald-500" /> Validated Strategy — Backtest + Out-of-Sample
+                    <Badge variant={validation?.isValid ? 'default' : 'secondary'} className={cn("ml-auto text-[10px]", validation?.isValid ? "bg-emerald-500" : "bg-amber-500/20 text-amber-600 border")}>{validation ? (validation.isValid ? "VALIDATED" : "NOT VALIDATED") : "NOT RUN"}</Badge>
+                  </CardTitle>
+                  <p className="text-[10px] text-muted-foreground">70% in-sample / 30% out-of-sample • Requires OOS winRate ≥52%, PF &gt;1, gap &lt;15% • Demo before live • No overfitting</p>
+                </CardHeader>
+                <CardContent className="p-3 pt-0 space-y-2">
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" className="h-7 text-xs flex-1" onClick={() => onRunBacktest?.()}>Run Backtest</Button>
+                    <Button variant="default" size="sm" className="h-7 text-xs flex-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => onRunValidation?.()}>Run Validation (OOS)</Button>
+                  </div>
+                  {validation ? (
+                    <div className="grid grid-cols-3 gap-2 text-[11px]">
+                      <div className="rounded bg-muted p-2 text-center"><div className="text-muted-foreground">IS winRate</div><div className="font-bold">{(validation.inSample.winRate*100).toFixed(1)}%<span className="font-normal text-muted-foreground"> ({validation.inSample.totalTrades})</span></div><div className="text-[10px]">PF {validation.inSample.profitFactor.toFixed(2)}</div></div>
+                      <div className="rounded bg-muted p-2 text-center"><div className="text-muted-foreground">OOS winRate</div><div className="font-bold">{(validation.outOfSample.winRate*100).toFixed(1)}%<span className="font-normal text-muted-foreground"> ({validation.outOfSample.totalTrades})</span></div><div className="text-[10px]">PF {validation.outOfSample.profitFactor.toFixed(2)}</div></div>
+                      <div className={cn("rounded p-2 text-center", validation.isValid ? "bg-emerald-500/10 border border-emerald-500/30" : "bg-amber-500/10 border border-amber-500/30")}><div className="text-muted-foreground">Gap</div><div className="font-bold">{(validation.gap*100).toFixed(1)}%</div><div className="text-[10px] truncate">{validation.reason}</div></div>
+                    </div>
+                  ) : <p className="text-[11px] text-muted-foreground">Run validation on collected ticks (needs ≥80 ticks). Live trading is safest after “VALIDATED” + demo.</p>}
+                  {drawdown && <div className="flex gap-2 text-[10px] text-muted-foreground"><span>Drawdown: <b className={drawdown.current>0? "text-red-500":""}>${drawdown.current.toFixed(2)}</b> / max ${drawdown.max.toFixed(2)}</span><span>•</span><span>Peak PnL ${drawdown.peak.toFixed(2)}</span></div>}
+                  <p className="text-[10px] text-muted-foreground">Pre-trade check: bot verifies <b>EV&gt;0</b> (payout−stake) at signal confidence before each buy — blocks blind trades. Continuously learns from live PnL (regularized) and remains inactive when risk &gt; threshold.</p>
                 </CardContent>
               </Card>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
