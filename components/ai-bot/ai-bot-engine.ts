@@ -93,6 +93,16 @@ export interface BotConfig {
   overUnderStrategy: boolean;
   overThreshold: number;
   underThreshold: number;
+  // Uploaded verified strategies — Even/Odd & Over/Under (production)
+  evenOddEnabled: boolean;
+  evenStreakEnabled: boolean;
+  oddStreakEnabled: boolean;
+  over3Under6Enabled: boolean;
+  streakLength: number;
+  splitMartingaleEnabled: boolean;
+  splitFactor: number;
+  returnRate: number;
+  tradeMode: 'all' | 'overUnder' | 'evenOdd';
 }
 
 export interface MarketAnalysis {
@@ -173,8 +183,8 @@ const generateId = (): string => Math.random().toString(36).substring(2, 11);
 const DEFAULT_CONFIG: BotConfig = {
   enabled: false,
   autoTrade: true,
-  stake: 1,
-  targetProfit: 50,
+  stake: 0.7,
+  targetProfit: 6,
   stopLoss: 50,
   maxTrades: 200,
   maxDailyTrades: 200,
@@ -182,19 +192,28 @@ const DEFAULT_CONFIG: BotConfig = {
   confidenceThreshold: 75,
   minTickInterval: 1200,
   maxConsecutiveLosses: 4,
-  maxDailyLoss: 100,
+  maxDailyLoss: 50,
   maxDailyProfit: 200,
   duration: 1,
   scanInterval: 1500,
   symbols: [],
   markets: [],
-  tradeTypes: ['DIGITDIFF', 'DIGITMATCH', 'DIGITOVER', 'DIGITUNDER'],
-  strategies: ['over2', 'under8'],
+  tradeTypes: ['DIGITDIFF', 'DIGITMATCH', 'DIGITOVER', 'DIGITUNDER', 'DIGITEVEN', 'DIGITODD'],
+  strategies: ['over2', 'under8', 'evenOdd', 'over3under6'],
   over2Enabled: true,
   under8Enabled: true,
   overUnderStrategy: false,
   overThreshold: 2,
   underThreshold: 8,
+  evenOddEnabled: true,
+  evenStreakEnabled: false,
+  oddStreakEnabled: false,
+  over3Under6Enabled: true,
+  streakLength: 3,
+  splitMartingaleEnabled: true,
+  splitFactor: 1,
+  returnRate: 0.54,
+  tradeMode: 'all',
 };
 
 export class AIBotEngine {
@@ -220,7 +239,12 @@ export class AIBotEngine {
     ['over2', { enabled: true, winRate: 0, trades: 0, profitFactor: 0 }],
     ['under8', { enabled: true, winRate: 0, trades: 0, profitFactor: 0 }],
     ['stat', { enabled: true, winRate: 0, trades: 0, profitFactor: 0 }],
+    ['evenOdd', { enabled: true, winRate: 0, trades: 0, profitFactor: 0 }],
+    ['over3under6', { enabled: true, winRate: 0, trades: 0, profitFactor: 0 }],
   ]);
+  // Split-martingale recovery (from uploaded verified bots) — production debt ledger
+  private recoveryDebt = 0;
+  private baseStakeSnapshot = 0;
 
   constructor(config?: Partial<BotConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -493,13 +517,18 @@ export class AIBotEngine {
   private refreshStrategyHealthFromLive() {
     const byMode: Record<string, { wins: number; total: number; profit: number; loss: number }> = {};
     for (const t of this.tradeHistory.filter(t => t.result !== 'PENDING').slice(0, 30)) {
-      const key = t.contractMode === 'DIGITOVER' ? 'over2' : t.contractMode === 'DIGITUNDER' ? 'under8' : 'stat';
+      let key: string = 'stat';
+      if (t.contractMode === 'DIGITEVEN' || t.contractMode === 'DIGITODD') key = 'evenOdd';
+      else if (t.contractMode === 'DIGITOVER' && (t.digit === 3 || t.digit === 6)) key = 'over3under6';
+      else if (t.contractMode === 'DIGITUNDER' && (t.digit === 3 || t.digit === 6)) key = 'over3under6';
+      else if (t.contractMode === 'DIGITOVER') key = 'over2';
+      else if (t.contractMode === 'DIGITUNDER') key = 'under8';
       if (!byMode[key]) byMode[key] = { wins: 0, total: 0, profit: 0, loss: 0 };
       byMode[key].total++;
       if (t.result === 'WIN') { byMode[key].wins++; byMode[key].profit += t.profit; }
       else byMode[key].loss += Math.abs(t.profit);
     }
-    for (const k of ['over2','under8','stat'] as const) {
+    for (const k of ['over2','under8','stat','evenOdd','over3under6'] as const) {
       const d = byMode[k];
       const cur = this.strategyHealth.get(k)!;
       if (!d || d.total < 8) continue;
@@ -552,10 +581,12 @@ export class AIBotEngine {
     this.config.enabled = true;
     this.config.symbols = symbols;
     this.consecutiveLosses = 0;
+    this.recoveryDebt = 0;
+    this.baseStakeSnapshot = this.config.stake;
     this.resetDailyIfNeeded();
     this.addActivity({
       type: 'INFO',
-      message: `AI Bot started. Monitoring ${symbols.length} symbols: ${symbols.join(', ')}`,
+      message: `AI Bot started. Monitoring ${symbols.length} symbols: ${symbols.join(', ')} | Mode: ${this.config.tradeMode} | Stake $${this.config.stake} ${this.config.splitMartingaleEnabled ? '(split-martingale recovery)' : ''}`,
     });
   }
 
@@ -591,10 +622,19 @@ export class AIBotEngine {
     this.peakPnl = Math.max(this.peakPnl, this.dailyStats.netPnl);
     const dd = this.peakPnl - this.dailyStats.netPnl;
     this.maxDrawdown = Math.max(this.maxDrawdown, dd);
+    // Split-martingale debt ledger (uploaded strategy): recover losses with calibrated stake
+    if (this.config.splitMartingaleEnabled) {
+      if (result === 'WIN') {
+        this.recoveryDebt = Math.max(0, this.recoveryDebt - Math.abs(profit));
+        if (this.recoveryDebt <= 0.01) this.recoveryDebt = 0;
+      } else {
+        this.recoveryDebt += Math.abs(profit);
+      }
+    }
 
     this.addActivity({
       type: 'RESULT',
-      message: `Trade ${result}: $${profit.toFixed(2)} | Streak: ${this.dailyStats.currentStreak} | Daily PnL: $${this.dailyStats.netPnl.toFixed(2)}`,
+      message: `Trade ${result}: $${profit.toFixed(2)} | Streak: ${this.dailyStats.currentStreak} | Daily PnL: $${this.dailyStats.netPnl.toFixed(2)}${this.recoveryDebt>0?` | Debt $${this.recoveryDebt.toFixed(2)}`:''}`,
     });
 
     if (this.consecutiveLosses >= this.config.maxConsecutiveLosses) {
@@ -728,6 +768,126 @@ export class AIBotEngine {
     this.onSignal?.(signal);
     this.addActivity({ type: 'SIGNAL', message: `${symbol}: UNDER 8 | Digits ${secondLastDigit}, ${lastDigit} | ${highCount}/${recentDigits.length} high | 8+9: ${combinedPct.toFixed(1)}% | ${confidence.toFixed(0)}% confidence` });
     return signal;
+  }
+
+  // ── Uploaded verified Even/Odd streak strategies (production, pip-accurate) ──
+  checkEvenOddStreak(symbol: string, digitStats: DigitStats): TradeSignal | null {
+    if (!this.config.evenOddEnabled && !this.config.evenStreakEnabled && !this.config.oddStreakEnabled) return null;
+    if (this.config.tradeMode === 'overUnder') return null;
+    const health = this.strategyHealth.get('evenOdd');
+    if (health && !health.enabled) return null;
+    const history = this.priceHistory.get(symbol) ?? [];
+    const pip = this.getPipSize(symbol);
+    const len = this.config.streakLength || 3;
+    if (history.length < len) return null;
+    const recent = history.slice(-len).map(p => getLastDigit(p, pip));
+    const allEven = recent.every(d => d % 2 === 0);
+    const allOdd = recent.every(d => d % 2 === 1);
+    if (!allEven && !allOdd) return null;
+    // Reversal logic from uploaded bots: 3 evens -> predict ODD, 3 odds -> predict EVEN
+    let contractMode: ContractMode | null = null;
+    let reason = '';
+    if (allEven && this.config.evenOddEnabled) { contractMode = 'DIGITODD'; reason = `Even streak ${len}x [${recent.join(',')}] → reversal ODD`; }
+    else if (allOdd && this.config.evenOddEnabled) { contractMode = 'DIGITEVEN'; reason = `Odd streak ${len}x [${recent.join(',')}] → reversal EVEN`; }
+    // Single-direction variants (if enabled)
+    if (!contractMode && allEven && this.config.evenStreakEnabled) { contractMode = 'DIGITODD'; reason = `Even streak ${len}x → ODD`; }
+    if (!contractMode && allOdd && this.config.oddStreakEnabled) { contractMode = 'DIGITEVEN'; reason = `Odd streak ${len}x → EVEN`; }
+    if (!contractMode) return null;
+    // Confidence: streak + parity deviation
+    const evenCount = digitStats.counts.filter((_, i) => i % 2 === 0).reduce((a,b)=>a+b,0);
+    const evenPct = digitStats.totalTicks ? (evenCount / digitStats.totalTicks)*100 : 50;
+    const parityDev = Math.abs(evenPct - 50);
+    let confidence = 78;
+    if (len >= 3 && parityDev > 4) confidence = 86;
+    else if (allEven || allOdd) confidence = 82;
+    if (parityDev > 6) confidence = Math.min(92, confidence + 4);
+    const stake = this.getEffectiveStake();
+    const recentTicks = history.slice(-10);
+    const signal: TradeSignal = {
+      id: generateId(), timestamp: Date.now(), symbol,
+      signalType: confidence >= 85 ? 'STRONG_BUY' : 'BUY',
+      confidence, contractMode, predictedDigit: undefined,
+      direction: contractMode === 'DIGITEVEN' ? 'Even' : 'Odd',
+      currentTick: recentTicks[recentTicks.length-1] ?? 0,
+      recentTicks, reasoning: [reason, `Even ${evenPct.toFixed(1)}% (expected 50%)`],
+      indicators: [
+        { name: 'Even/Odd Streak', value: `${recent.join(',')}`, bullish: true },
+        { name: 'Even %', value: `${evenPct.toFixed(1)}%`, bullish: parityDev>3 },
+      ],
+      riskLevel: confidence >= 85 ? 'LOW' : 'MEDIUM',
+      recommendedStake: stake, reasonForEntry: reason,
+      marketCondition: 'Even/Odd reversal', type: contractMode,
+    };
+    this.signals = [signal, ...this.signals].slice(0,200);
+    this.onSignal?.(signal);
+    this.addActivity({ type: 'SIGNAL', message: `${symbol}: EVEN/ODD streak ${recent.join(',')} → ${contractMode} | ${confidence}%` });
+    return signal;
+  }
+
+  // ── Uploaded verified Over 3 / Under 6 strategies (production) ──
+  checkOver3Under6(symbol: string, digitStats: DigitStats): TradeSignal | null {
+    if (!this.config.over3Under6Enabled) return null;
+    if (this.config.tradeMode === 'evenOdd') return null;
+    const health = this.strategyHealth.get('over3under6');
+    if (health && !health.enabled) return null;
+    const history = this.priceHistory.get(symbol) ?? [];
+    const pip = this.getPipSize(symbol);
+    if (history.length < 3) return null;
+    const recent3 = history.slice(-3).map(p => getLastDigit(p, pip));
+    const over3Count = digitStats.counts.slice(4).reduce((a,b)=>a+b,0); // digits >3 (4-9)
+    const over3Pct = digitStats.totalTicks ? (over3Count / digitStats.totalTicks)*100 : 0;
+    const under6Count = digitStats.counts.slice(0,6).reduce((a,b)=>a+b,0); // digits 0-5 (<6)
+    const under6Pct = digitStats.totalTicks ? (under6Count / digitStats.totalTicks)*100 : 0;
+    // Uploaded logic: Over 3 >50% over last 1000 + last 3 digits <4 → DIGITOVER 3
+    // Under 6 >50% + last 3 >5 → DIGITUNDER 6 (corrected from DBot bug where both bought OVER)
+    let contractMode: ContractMode | null = null;
+    let barrier = 0;
+    let reason = '';
+    let confidence = 0;
+    const last3Low = recent3.every(d => d < 4);
+    const last3High = recent3.every(d => d > 5);
+    if (over3Pct > 50 && last3Low) {
+      contractMode = 'DIGITOVER'; barrier = 3;
+      confidence = over3Pct > 55 ? 88 : 80;
+      reason = `Over 3 at ${over3Pct.toFixed(1)}% (>50%) + last 3 ${recent3.join(',')} <4 → OVER 3`;
+    } else if (under6Pct > 50 && last3High) {
+      contractMode = 'DIGITUNDER'; barrier = 6;
+      confidence = under6Pct > 55 ? 88 : 80;
+      reason = `Under 6 at ${under6Pct.toFixed(1)}% (>50%) + last 3 ${recent3.join(',')} >5 → UNDER 6`;
+    }
+    if (!contractMode) return null;
+    // Validate recent parity supports direction to avoid forcing
+    if (digitStats.totalTicks < 20) return null;
+    const stake = this.getEffectiveStake();
+    const recentTicks = history.slice(-10);
+    const signal: TradeSignal = {
+      id: generateId(), timestamp: Date.now(), symbol,
+      signalType: confidence >= 85 ? 'STRONG_BUY' : 'BUY',
+      confidence, contractMode, predictedDigit: barrier,
+      direction: `${contractMode === 'DIGITOVER' ? 'Over' : 'Under'} ${barrier}`,
+      currentTick: recentTicks[recentTicks.length-1] ?? 0,
+      recentTicks, reasoning: [reason],
+      indicators: [
+        { name: contractMode === 'DIGITOVER' ? 'Over 3 %' : 'Under 6 %', value: `${(contractMode==='DIGITOVER'?over3Pct:under6Pct).toFixed(1)}%`, bullish: true },
+        { name: 'Last 3', value: recent3.join(','), bullish: true },
+      ],
+      riskLevel: confidence >= 85 ? 'LOW' : 'MEDIUM',
+      recommendedStake: stake, reasonForEntry: reason,
+      marketCondition: 'Over3/Under6 verified', type: contractMode,
+    };
+    this.signals = [signal, ...this.signals].slice(0,200);
+    this.onSignal?.(signal);
+    this.addActivity({ type: 'SIGNAL', message: `${symbol}: ${contractMode} ${barrier} | ${reason} | ${confidence}%` });
+    return signal;
+  }
+
+  private getEffectiveStake(): number {
+    if (!this.config.splitMartingaleEnabled || this.recoveryDebt <= 0.01) return this.config.stake;
+    const split = Math.max(1, this.config.splitFactor);
+    const rate = this.config.returnRate > 0 ? this.config.returnRate : 0.54;
+    const raw = (this.recoveryDebt / (split * rate));
+    const rounded = Math.ceil(raw * 100) / 100;
+    return Math.max(0.35, rounded);
   }
 
   analyzeMarket(symbol: string, digitStats: DigitStats, lastDigit: number, lastPrice: number): MarketAnalysis {

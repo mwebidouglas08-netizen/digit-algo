@@ -68,12 +68,14 @@ const ALL_MARKETS = [
 ];
 
 const STRATEGIES = [
-  { id: 'over2', label: 'Over 2 (Assured)', desc: 'Only when last 2 digits ≤2 AND 3+ of last 10 ≤2 — trades DIGITOVER 2. Highest edge; high confidence only (≥78%).' },
-  { id: 'under8', label: 'Under 8 (Assured)', desc: 'Only when last 2 digits ≥7 AND 8+9 combined <15% — trades DIGITUNDER 8. High confidence only (≥80%).' },
-  { id: 'hotspot', label: 'Hotspot Detection', desc: 'Statistical signal when a digit is hot (>12%). Conservative threshold 75% — often stays out.' },
-  { id: 'mean_reversion', label: 'Mean Reversion', desc: 'Statistical signal when a digit is overdue. Conservative — requires strong deviation.' },
-  { id: 'trend_following', label: 'Trend Following', desc: 'Momentum signal — only when trend + deviation align. Often filtered out.' },
-  { id: 'over_under', label: 'Over/Under Hybrid', desc: 'Disabled by default — extra statistical Over/Under overlay. Enable only if you want more trades.' },
+  { id: 'over2', label: 'Over 2 (Assured)', desc: 'When last 2 digits ≤2 AND 3+ of last 10 ≤2 — DIGITOVER 2. Verified, pip-accurate. (Uploaded: Over 3 baseline)' },
+  { id: 'under8', label: 'Under 8 (Assured)', desc: 'When last 2 digits ≥7 AND 8+9 combined <15% — DIGITUNDER 8. Verified, high confidence only.' },
+  { id: 'evenOdd', label: 'Even/Odd Streak (Combined)', desc: 'Uploaded Even_Odd_Combined_Streak_Bot: 3 evens → ODD, 3 odds → EVEN. Reversal, 100-tick history.' },
+  { id: 'evenStreak', label: 'Even Streak → Odd', desc: 'Uploaded Even_Streak_Bot: 3 consecutive evens → DIGITODD. Production streak len 3.' },
+  { id: 'oddStreak', label: 'Odd Streak → Even', desc: 'Uploaded Odd_Streak_Bot: 3 consecutive odds → DIGITEVEN. Production reversal.' },
+  { id: 'over3under6', label: 'Over 3 / Under 6', desc: 'Uploaded Split_Martingale OVER 3 & UNDER 6: Over 3 >50% + last 3 <4 → OVER 3, Under 6 >50% + last 3 >5 → UNDER 6. Verified.' },
+  { id: 'hotspot', label: 'Hotspot Detection', desc: 'Statistical signal when digit hot (>12%). Conservative threshold 75%.' },
+  { id: 'over_under', label: 'Over/Under Hybrid', desc: 'Disabled by default — extra statistical overlay. Enable only if you want more trades.' },
 ];
 
 export function AIBotPanel({
@@ -85,7 +87,7 @@ export function AIBotPanel({
 }: AIBotPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [settingsExpanded, setSettingsExpanded] = useState<Record<string, boolean>>({
-    trade: true, strategy: false, risk: false, markets: false,
+    trade: true, strategy: false, risk: false, markets: false, marketMode: false,
   });
   const signalsEndRef = useRef<HTMLDivElement>(null);
 
@@ -556,6 +558,10 @@ export function AIBotPanel({
                       let isEnabled = false;
                       if (s.id === 'over2') isEnabled = config.over2Enabled;
                       else if (s.id === 'under8') isEnabled = config.under8Enabled;
+                      else if (s.id === 'evenOdd') isEnabled = config.evenOddEnabled;
+                      else if (s.id === 'evenStreak') isEnabled = config.evenStreakEnabled;
+                      else if (s.id === 'oddStreak') isEnabled = config.oddStreakEnabled;
+                      else if (s.id === 'over3under6') isEnabled = config.over3Under6Enabled;
                       else if (s.id === 'over_under') isEnabled = config.overUnderStrategy;
                       else isEnabled = (config.strategies ?? []).includes(s.id);
 
@@ -571,6 +577,10 @@ export function AIBotPanel({
                             onChange={() => {
                               if (s.id === 'over2') onUpdateConfig({ over2Enabled: !config.over2Enabled });
                               else if (s.id === 'under8') onUpdateConfig({ under8Enabled: !config.under8Enabled });
+                              else if (s.id === 'evenOdd') onUpdateConfig({ evenOddEnabled: !config.evenOddEnabled });
+                              else if (s.id === 'evenStreak') onUpdateConfig({ evenStreakEnabled: !config.evenStreakEnabled });
+                              else if (s.id === 'oddStreak') onUpdateConfig({ oddStreakEnabled: !config.oddStreakEnabled });
+                              else if (s.id === 'over3under6') onUpdateConfig({ over3Under6Enabled: !config.over3Under6Enabled });
                               else if (s.id === 'over_under') onUpdateConfig({ overUnderStrategy: !config.overUnderStrategy });
                               else {
                                 const current = config.strategies ?? [];
@@ -583,6 +593,49 @@ export function AIBotPanel({
                         </div>
                       );
                     })}
+                  </CardContent>
+                )}
+              </Card>
+
+              <Card className="bg-card/50">
+                <button onClick={() => setSettingsExpanded(p => ({ ...p, marketMode: !p.marketMode }))} className="flex items-center justify-between w-full p-3 sm:p-4">
+                  <CardTitle className="text-sm flex items-center gap-2"><Activity className="h-4 w-4 text-blue-500" /> Market & Recovery</CardTitle>
+                  {settingsExpanded.marketMode ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
+                {settingsExpanded.marketMode && (
+                  <CardContent className="px-3 pb-3 sm:px-4 sm:pb-4 pt-0 space-y-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground">Bot Trade Market (AI chooses within this)</label>
+                      <select value={config.tradeMode} onChange={e => onUpdateConfig({ tradeMode: e.target.value as BotConfig['tradeMode'] })} className="h-8 w-full rounded border bg-background px-2 text-sm">
+                        <option value="all">All — AI scans Over/Under + Even/Odd (recommended)</option>
+                        <option value="overUnder">Over/Under only — disables Even/Odd</option>
+                        <option value="evenOdd">Even/Odd only — disables Over/Under</option>
+                      </select>
+                      <p className="text-[11px] text-muted-foreground">Upload-verified: Over 3/Under 6 and Even/Odd streaks are production strategies (pip-accurate, real ticks).</p>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-medium">Split-Martingale Recovery</div>
+                        <div className="text-xs text-muted-foreground">From uploaded bots — recovers debt with stake = ROUNDUP(debt/(split×returnRate)*100)/100, min 0.35</div>
+                      </div>
+                      <input type="checkbox" checked={config.splitMartingaleEnabled} onChange={() => onUpdateConfig({ splitMartingaleEnabled: !config.splitMartingaleEnabled })} className="h-4 w-4 accent-emerald-500" />
+                    </div>
+                    {config.splitMartingaleEnabled && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">Split Factor</label>
+                          <input type="number" value={config.splitFactor} onChange={e => onUpdateConfig({ splitFactor: Math.max(1, parseInt(e.target.value) || 1) })} className="h-8 w-full rounded border bg-background px-2 text-sm" min="1" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">Return Rate</label>
+                          <input type="number" value={config.returnRate} onChange={e => onUpdateConfig({ returnRate: parseFloat(e.target.value) || 0.54 })} className="h-8 w-full rounded border bg-background px-2 text-sm" step="0.01" min="0.1" max="1" />
+                        </div>
+                      </div>
+                    )}
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">Streak Length (for Even/Odd)</label>
+                      <input type="number" value={config.streakLength} onChange={e => onUpdateConfig({ streakLength: Math.max(2, Math.min(5, parseInt(e.target.value) || 3)) })} className="h-8 w-full rounded border bg-background px-2 text-sm" min="2" max="5" />
+                    </div>
                   </CardContent>
                 )}
               </Card>

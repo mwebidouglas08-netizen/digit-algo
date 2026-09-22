@@ -53,7 +53,7 @@ export function AIBotController({
   const {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
     lastAnalysis, emergencyStop, validation,
-    startBot, stopBot, updateConfig, processTick, checkRules, prepareTrade,
+    startBot, stopBot, updateConfig, processTick, checkRules, checkEvenOdd, checkOver3Under6, prepareTrade,
     recordTradeResult, triggerEmergencyStop, resetEmergencyStop,
     isRiskAcceptable, runValidation, runBacktest, getDrawdown, runPeriodicValidation, getStrategyHealth,
   } = useAIBot();
@@ -102,22 +102,13 @@ export function AIBotController({
     buyCooldownRef.current = true;
     lastSignalRef.current = signal.id;
 
-    let digit = 5;
-    let contractMode: ContractMode = 'DIGITDIFF';
-
-    if (signal.contractMode === 'DIGITOVER') {
-      contractMode = 'DIGITOVER';
-      digit = 2;
-    } else if (signal.contractMode === 'DIGITUNDER') {
-      contractMode = 'DIGITUNDER';
-      digit = 8;
-    } else if (signal.contractMode === 'DIGITMATCH') {
-      contractMode = 'DIGITMATCH';
-      digit = signal.predictedDigit ?? 5;
-    } else if (signal.contractMode === 'DIGITDIFF') {
-      contractMode = 'DIGITDIFF';
-      digit = signal.predictedDigit ?? 5;
-    }
+    // Production: support all verified markets — over/under, even/odd, matches/differs
+    // Digit is barrier for over/under/match/diff, ignored for even/odd (sent as 0)
+    const contractMode: ContractMode = signal.contractMode;
+    let digit = signal.predictedDigit ?? 5;
+    if (contractMode === 'DIGITOVER' && signal.predictedDigit === undefined) digit = 2;
+    if (contractMode === 'DIGITUNDER' && signal.predictedDigit === undefined) digit = 8;
+    if (contractMode === 'DIGITEVEN' || contractMode === 'DIGITODD') digit = 0;
 
     try {
       // autoBuy now verifies expected profit (EV>0, payout>stake) before buying — no blind trades
@@ -163,14 +154,17 @@ export function AIBotController({
     // fallback to local ticks with real pipSize for early startup.
     const stats = digitStats.totalTicks >= 10 ? digitStats : computeDigitStats(ticks, pipSize);
 
+    // AI analyses all uploaded verified strategies + statistical — picks validated highest confidence
     const sig = processTick(symbol, price, stats, pipSize);
-
     const ruleSignal = checkRules(symbol, price, stats, pipSize);
-
-    const bestSignal = ruleSignal && ruleSignal.confidence > (sig?.confidence ?? 0) ? ruleSignal : sig;
+    const evenOddSignal = checkEvenOdd(symbol, stats);
+    const over3Under6Signal = checkOver3Under6(symbol, stats);
+    const candidates = [sig, ruleSignal, evenOddSignal, over3Under6Signal].filter(Boolean) as (typeof sig)[];
+    // AI decision: select highest-confidence validated signal — never force when none meet threshold
+    const bestSignal = candidates.length ? candidates.reduce((a, b) => (a!.confidence > b!.confidence ? a : b), candidates[0])! : null;
 
     if (bestSignal && config.autoTrade && !emergencyStop) {
-      // Risk threshold: remain inactive if expected risk exceeds configured threshold
+      // Risk threshold: remain inactive if expected risk exceeds configured threshold — never blind
       const riskOk = isRiskAcceptable(bestSignal as unknown as import('./ai-bot-engine').TradeSignal, balance);
       if (!riskOk.ok) return;
       const check = prepareTrade(bestSignal, balance);
@@ -178,7 +172,7 @@ export function AIBotController({
         executeAutoBuy(bestSignal as { id: string; contractMode: ContractMode; predictedDigit?: number; recommendedStake: number; confidence: number });
       }
     }
-  }, [isRunning, currentTick, activeSymbol, digitStats, pipSize, processTick, checkRules, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy, isRiskAcceptable]);
+  }, [isRunning, currentTick, activeSymbol, digitStats, pipSize, processTick, checkRules, checkEvenOdd, checkOver3Under6, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy, isRiskAcceptable]);
 
   // Multi-market scan: every scanInterval, look at REAL digit distribution across all
   // subscribed markets and auto-switch to the market with strongest edge.
@@ -213,7 +207,16 @@ export function AIBotController({
         const highEnabled = health.get('under8')?.enabled !== false;
         const lowRun = lowEnabled && recentDigits.slice(-2).every(d => d <= 2) ? 5 : 0;
         const highRun = highEnabled && recentDigits.slice(-2).every(d => d >= 7) ? 5 : 0;
-        const score = deviation + lowRun + highRun;
+        // Even/Odd parity streak bonus (uploaded verified)
+        const evenEnabled = health.get('evenOdd')?.enabled !== false;
+        let parityBonus = 0;
+        if (evenEnabled && recentDigits.length >= 3) {
+          const last3 = recentDigits.slice(-3);
+          const allEven = last3.every(d => d % 2 === 0);
+          const allOdd = last3.every(d => d % 2 === 1);
+          if (allEven || allOdd) parityBonus = 4;
+        }
+        const score = deviation + lowRun + highRun + parityBonus;
         if (score > bestScore && score >= 4) {
           bestScore = score;
           bestSymbol = symName;

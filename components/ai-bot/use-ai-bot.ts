@@ -31,6 +31,8 @@ interface UseAIBotReturn {
   updateConfig: (config: Partial<BotConfig>) => void;
   processTick: (symbol: string, price: number, digitStats: DigitStats, pipSize?: number) => TradeSignal | null;
   checkRules: (symbol: string, price: number, digitStats: DigitStats, pipSize?: number) => TradeSignal | null;
+  checkEvenOdd: (symbol: string, digitStats: DigitStats) => TradeSignal | null;
+  checkOver3Under6: (symbol: string, digitStats: DigitStats) => TradeSignal | null;
   prepareTrade: (signal: TradeSignal, balance: number) => { stake: number; willTrade: boolean; reason?: string };
   recordTradeResult: (tradeId: string, result: 'WIN' | 'LOSS', profit: number) => void;
   triggerEmergencyStop: () => void;
@@ -53,8 +55,8 @@ export function useAIBot(): UseAIBotReturn {
   const [config, setConfig] = useState<BotConfig>({
     enabled: false,
     autoTrade: true,
-    stake: 1,
-    targetProfit: 50,
+    stake: 0.7,
+    targetProfit: 6,
     stopLoss: 50,
     maxTrades: 200,
     maxDailyTrades: 200,
@@ -62,19 +64,28 @@ export function useAIBot(): UseAIBotReturn {
     confidenceThreshold: 75,
     minTickInterval: 1200,
     maxConsecutiveLosses: 4,
-    maxDailyLoss: 100,
+    maxDailyLoss: 50,
     maxDailyProfit: 200,
     duration: 1,
     scanInterval: 1500,
     symbols: [],
     markets: [],
-    tradeTypes: ['DIGITDIFF', 'DIGITMATCH', 'DIGITOVER', 'DIGITUNDER'],
-    strategies: ['over2', 'under8'],
+    tradeTypes: ['DIGITDIFF', 'DIGITMATCH', 'DIGITOVER', 'DIGITUNDER', 'DIGITEVEN', 'DIGITODD'],
+    strategies: ['over2', 'under8', 'evenOdd', 'over3under6'],
     over2Enabled: true,
     under8Enabled: true,
     overUnderStrategy: false,
     overThreshold: 2,
     underThreshold: 8,
+    evenOddEnabled: true,
+    evenStreakEnabled: false,
+    oddStreakEnabled: false,
+    over3Under6Enabled: true,
+    streakLength: 3,
+    splitMartingaleEnabled: true,
+    splitFactor: 1,
+    returnRate: 0.54,
+    tradeMode: 'all',
   });
   const [activities, setActivities] = useState<BotActivity[]>([]);
   const [signals, setSignals] = useState<TradeSignal[]>([]);
@@ -160,6 +171,20 @@ export function useAIBot(): UseAIBotReturn {
     return null;
   }, [isRunning, syncState]);
 
+  const checkEvenOdd = useCallback((symbol: string, digitStats: DigitStats): TradeSignal | null => {
+    if (!engineRef.current || !isRunning) return null;
+    const sig = engineRef.current.checkEvenOddStreak(symbol, digitStats);
+    if (sig) syncState();
+    return sig;
+  }, [isRunning, syncState]);
+
+  const checkOver3Under6 = useCallback((symbol: string, digitStats: DigitStats): TradeSignal | null => {
+    if (!engineRef.current || !isRunning) return null;
+    const sig = engineRef.current.checkOver3Under6(symbol, digitStats);
+    if (sig) syncState();
+    return sig;
+  }, [isRunning, syncState]);
+
   const processTick = useCallback((symbol: string, price: number, digitStats: DigitStats, pipSize: number = 2): TradeSignal | null => {
     if (!engineRef.current || !isRunning) return null;
     engineRef.current.updatePriceHistory(symbol, price, pipSize);
@@ -243,7 +268,7 @@ export function useAIBot(): UseAIBotReturn {
   return {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
     lastAnalysis, emergencyStop, validation,
-    startBot, stopBot, updateConfig, processTick, checkRules, prepareTrade,
+    startBot, stopBot, updateConfig, processTick, checkRules, checkEvenOdd, checkOver3Under6, prepareTrade,
     recordTradeResult, triggerEmergencyStop, resetEmergencyStop,
     clearActivities, clearSignals,
     verifyExpectedProfit, isRiskAcceptable, runBacktest, runValidation, getLastValidation, getDrawdown,
