@@ -11,6 +11,7 @@ import {
   type DailyStats,
 } from './ai-bot-engine';
 import type { DigitStats } from '@/lib/types';
+import { getLastDigit } from '@/lib/digit-stats';
 
 interface UseAIBotReturn {
   isRunning: boolean;
@@ -24,8 +25,8 @@ interface UseAIBotReturn {
   startBot: (symbols: string[]) => void;
   stopBot: () => void;
   updateConfig: (config: Partial<BotConfig>) => void;
-  processTick: (symbol: string, price: number, digitStats: DigitStats) => TradeSignal | null;
-  checkRules: (symbol: string, price: number, digitStats: DigitStats) => TradeSignal | null;
+  processTick: (symbol: string, price: number, digitStats: DigitStats, pipSize?: number) => TradeSignal | null;
+  checkRules: (symbol: string, price: number, digitStats: DigitStats, pipSize?: number) => TradeSignal | null;
   prepareTrade: (signal: TradeSignal, balance: number) => { stake: number; willTrade: boolean; reason?: string };
   recordTradeResult: (tradeId: string, result: 'WIN' | 'LOSS', profit: number) => void;
   triggerEmergencyStop: () => void;
@@ -39,26 +40,26 @@ export function useAIBot(): UseAIBotReturn {
   const [config, setConfig] = useState<BotConfig>({
     enabled: false,
     autoTrade: true,
-    stake: 10,
-    targetProfit: 50,
-    stopLoss: 100,
-    maxTrades: 50,
-    maxDailyTrades: 50,
-    minConfidence: 40,
-    confidenceThreshold: 40,
-    minTickInterval: 1000,
-    maxConsecutiveLosses: 5,
-    maxDailyLoss: 200,
-    maxDailyProfit: 500,
-    duration: 5,
-    scanInterval: 2000,
+    stake: 1,
+    targetProfit: 20,
+    stopLoss: 30,
+    maxTrades: 30,
+    maxDailyTrades: 30,
+    minConfidence: 75,
+    confidenceThreshold: 75,
+    minTickInterval: 2500,
+    maxConsecutiveLosses: 3,
+    maxDailyLoss: 30,
+    maxDailyProfit: 50,
+    duration: 1,
+    scanInterval: 3000,
     symbols: [],
     markets: [],
     tradeTypes: ['DIGITDIFF', 'DIGITMATCH', 'DIGITOVER', 'DIGITUNDER'],
     strategies: ['over2', 'under8'],
     over2Enabled: true,
     under8Enabled: true,
-    overUnderStrategy: true,
+    overUnderStrategy: false,
     overThreshold: 2,
     underThreshold: 8,
   });
@@ -120,16 +121,16 @@ export function useAIBot(): UseAIBotReturn {
     });
   }, []);
 
-  const checkRules = useCallback((symbol: string, price: number, digitStats: DigitStats): TradeSignal | null => {
+  const checkRules = useCallback((symbol: string, price: number, digitStats: DigitStats, pipSize: number = 2): TradeSignal | null => {
     if (!engineRef.current || !isRunning) return null;
 
     const history = priceHistoryRef.current.get(symbol) ?? [];
     history.push(price);
     if (history.length > 200) history.shift();
     priceHistoryRef.current.set(symbol, history);
-    engineRef.current.updatePriceHistory(symbol, price);
+    engineRef.current.updatePriceHistory(symbol, price, pipSize);
 
-    const lastDigit = parseInt(price.toFixed(2).slice(-1), 10);
+    const lastDigit = getLastDigit(price, pipSize);
 
     if (history.length >= 2) {
       const secondLastPrice = history[history.length - 2];
@@ -145,10 +146,10 @@ export function useAIBot(): UseAIBotReturn {
     return null;
   }, [isRunning, syncState]);
 
-  const processTick = useCallback((symbol: string, price: number, digitStats: DigitStats): TradeSignal | null => {
+  const processTick = useCallback((symbol: string, price: number, digitStats: DigitStats, pipSize: number = 2): TradeSignal | null => {
     if (!engineRef.current || !isRunning) return null;
-    engineRef.current.updatePriceHistory(symbol, price);
-    const lastDigit = parseInt(price.toFixed(2).slice(-1), 10);
+    engineRef.current.updatePriceHistory(symbol, price, pipSize);
+    const lastDigit = getLastDigit(price, pipSize);
     const analysis = engineRef.current.analyzeMarket(symbol, digitStats, lastDigit, price);
     setLastAnalysis(analysis);
     const signal = engineRef.current.generateSignal(analysis, 1000);

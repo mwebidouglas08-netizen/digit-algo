@@ -100,7 +100,7 @@ export interface DigitsViewProps {
   proposal: ProposalInfo | null;
   isProposalLoading: boolean;
   buyContract: () => Promise<void>;
-  autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number }) => Promise<boolean>;
+  autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number; duration?: number }) => Promise<boolean>;
   isBuying: boolean;
   buyResult: BuyResult | null;
   buyError: string | null;
@@ -275,6 +275,7 @@ export function DigitsView({
                 buyResult={buyResult}
                 openPositions={openPositions}
                 selectSymbol={selectSymbol}
+                pipSize={pipSize}
               />
             )}
             <ThemeToggle />
@@ -299,6 +300,11 @@ export function DigitsView({
     digitStats,
     symbols,
     isConnected,
+    pipSize,
+    autoBuy,
+    buyResult,
+    openPositions,
+    selectSymbol,
   ]);
 
   if (error) {

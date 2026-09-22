@@ -63,12 +63,12 @@ const ALL_MARKETS = [
 ];
 
 const STRATEGIES = [
-  { id: 'over2', label: 'Over 2', desc: 'When last 2 digits are 0 or 1, auto trade DIGITOVER 2' },
-  { id: 'under8', label: 'Under 8', desc: 'When last 2 digits are 8 or 9 AND combined freq < 10%, auto trade DIGITUNDER 8' },
-  { id: 'hotspot', label: 'Hotspot Detection', desc: 'Buy when a digit appears more than expected' },
-  { id: 'mean_reversion', label: 'Mean Reversion', desc: 'Buy when a digit is overdue (cold)' },
-  { id: 'trend_following', label: 'Trend Following', desc: 'Follow the most common digit pattern' },
-  { id: 'over_under', label: 'Over/Under Hybrid', desc: 'Use Over/Under analysis to guide digit picks' },
+  { id: 'over2', label: 'Over 2 (Assured)', desc: 'Only when last 2 digits ≤2 AND 3+ of last 10 ≤2 — trades DIGITOVER 2. Highest edge; high confidence only (≥78%).' },
+  { id: 'under8', label: 'Under 8 (Assured)', desc: 'Only when last 2 digits ≥7 AND 8+9 combined <15% — trades DIGITUNDER 8. High confidence only (≥80%).' },
+  { id: 'hotspot', label: 'Hotspot Detection', desc: 'Statistical signal when a digit is hot (>12%). Conservative threshold 75% — often stays out.' },
+  { id: 'mean_reversion', label: 'Mean Reversion', desc: 'Statistical signal when a digit is overdue. Conservative — requires strong deviation.' },
+  { id: 'trend_following', label: 'Trend Following', desc: 'Momentum signal — only when trend + deviation align. Often filtered out.' },
+  { id: 'over_under', label: 'Over/Under Hybrid', desc: 'Disabled by default — extra statistical Over/Under overlay. Enable only if you want more trades.' },
 ];
 
 export function AIBotPanel({
@@ -190,6 +190,14 @@ export function AIBotPanel({
 
           {activeTab === 'dashboard' && (
             <>
+              <Card className="bg-amber-500/5 border-amber-500/20">
+                <CardContent className="p-2.5 flex items-start gap-2">
+                  <Shield className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    <span className="font-semibold text-amber-600">Production mode:</span> Uses <span className="font-medium">real Deriv ticks</span> and your Settings (stake ${config.stake.toFixed(2)} • duration {config.duration} tick • min confidence {Math.round(config.confidenceThreshold*100)}%). No digit strategy can guarantee profit — digits are pseudo-random. Bot trades <span className="font-medium">only high-confidence</span> Assured setups (Over 2 / Under 8 ≥75%) and pauses on {config.maxConsecutiveLosses} consecutive losses or ${config.maxDailyLoss} daily loss. Expect wins <em>and</em> losses.
+                  </p>
+                </CardContent>
+              </Card>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
                 {[
                   { label: 'Balance', value: formatCurrency(balance), icon: DollarSign, color: 'text-emerald-500' },
@@ -241,40 +249,56 @@ export function AIBotPanel({
               </div>
 
               {lastAnalysis && (
-                <Card className="bg-card/50">
+                <Card className="bg-card/50 border-emerald-500/20">
                   <CardHeader className="p-3 sm:p-4 pb-2">
                     <CardTitle className="text-sm sm:text-base flex items-center gap-2">
                       <Activity className="h-4 w-4 text-emerald-500" />
-                      Latest Analysis
+                      Real Digit Dominance — Live Scan
                       <Badge variant="secondary" className="ml-auto text-[10px]">{lastAnalysis.symbol}</Badge>
                     </CardTitle>
+                    <p className="text-[11px] text-muted-foreground">Live ticks: {lastAnalysis.digitStats.totalTicks} • Expected per digit: 10% • Bars show real % from Deriv ticks (pip-accurate)</p>
                   </CardHeader>
-                  <CardContent className="p-3 sm:p-4 pt-0 space-y-2 sm:space-y-3">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="space-y-1">
-                        <span className="text-xs text-muted-foreground">Dominant Digit</span>
-                        <div className="text-2xl sm:text-3xl font-bold text-emerald-500">{lastAnalysis.dominantDigit}</div>
+                  <CardContent className="p-3 sm:p-4 pt-0 space-y-3">
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-2">
+                        <div className="text-[10px] text-muted-foreground">Dominant</div>
+                        <div className="text-xl font-bold text-emerald-500">{lastAnalysis.dominantDigit} <span className="text-xs font-normal">{lastAnalysis.digitFrequencies[lastAnalysis.dominantDigit]?.[1].toFixed(1)}%</span></div>
                       </div>
-                      <div className="space-y-1">
-                        <span className="text-xs text-muted-foreground">Entropy</span>
-                        <div className="text-2xl sm:text-3xl font-bold text-blue-500">{lastAnalysis.entropy.toFixed(3)}</div>
+                      <div className="rounded-lg bg-muted p-2">
+                        <div className="text-[10px] text-muted-foreground">Entropy</div>
+                        <div className="text-xl font-bold">{lastAnalysis.entropy.toFixed(2)}</div>
+                        <div className="text-[10px] text-muted-foreground">{lastAnalysis.entropy < 3.1 ? 'Low = skewed' : 'High = random'}</div>
+                      </div>
+                      <div className="rounded-lg bg-muted p-2">
+                        <div className="text-[10px] text-muted-foreground">Last Digit</div>
+                        <div className="text-xl font-bold">{lastAnalysis.lastDigit}</div>
+                        <div className="text-[10px] text-muted-foreground truncate">{lastAnalysis.symbol.split('_').pop()}</div>
                       </div>
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {lastAnalysis.digitFrequencies.map(([digit, freq]) => (
-                        <Badge
-                          key={digit}
-                          variant={digit === lastAnalysis.dominantDigit ? 'default' : 'secondary'}
-                          className={cn(
-                            "text-xs px-2",
-                            digit === lastAnalysis.dominantDigit ? "bg-emerald-500 text-white"
-                              : freq > 12 ? "bg-red-500/20 text-red-400"
-                              : freq < 8 ? "bg-blue-500/20 text-blue-400" : ""
-                          )}
-                        >
-                          {digit}: {freq.toFixed(1)}%
-                        </Badge>
-                      ))}
+                    <div className="space-y-1.5">
+                      {lastAnalysis.digitFrequencies.map(([digit, freq]) => {
+                        const isDom = digit === lastAnalysis.dominantDigit;
+                        const isHot = freq > 12;
+                        const isCold = freq < 7;
+                        const barWidth = Math.min(100, (freq / 16) * 100);
+                        return (
+                          <div key={digit} className="flex items-center gap-2 text-xs">
+                            <span className={cn("w-5 font-mono font-bold", isDom ? "text-emerald-500" : isHot ? "text-amber-500" : isCold ? "text-blue-500" : "")}>{digit}</span>
+                            <div className="flex-1 h-4 rounded bg-muted relative overflow-hidden">
+                              <div className={cn("h-full rounded transition-all", isDom ? "bg-emerald-500" : isHot ? "bg-amber-500" : isCold ? "bg-blue-500" : "bg-foreground/60")} style={{ width: `${barWidth}%` }} />
+                              <div className="absolute inset-0 flex items-center px-1.5 text-[10px] font-medium mix-blend-difference text-white">{freq.toFixed(1)}%</div>
+                              <div className="absolute top-0 bottom-0 w-px bg-red-500/70" style={{ left: `${(10/16)*100}%` }} title="10% expected" />
+                            </div>
+                            <span className="w-12 text-right font-mono text-[11px] text-muted-foreground">{freq.toFixed(1)}%</span>
+                            {isHot && <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-amber-500/40 text-amber-600">HOT</Badge>}
+                            {isCold && <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-blue-500/40 text-blue-600">COLD</Badge>}
+                          </div>
+                        );
+                      })}
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground pt-1">
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-red-500/70 inline-block" /> 10% expected</span>
+                        <span>•</span><span>Bar = real Dominance from live ticks</span>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

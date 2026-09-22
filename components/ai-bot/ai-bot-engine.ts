@@ -1,6 +1,7 @@
 'use client';
 
 import type { DigitStats, ContractMode } from '@/lib/types';
+import { getLastDigit } from '@/lib/digit-stats';
 
 export type SignalType = 'STRONG_BUY' | 'BUY' | 'NEUTRAL' | 'WAIT' | 'SELL' | 'STRONG_SELL';
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME';
@@ -145,26 +146,26 @@ const generateId = (): string => Math.random().toString(36).substring(2, 11);
 const DEFAULT_CONFIG: BotConfig = {
   enabled: false,
   autoTrade: true,
-  stake: 10,
-  targetProfit: 50,
-  stopLoss: 100,
-  maxTrades: 50,
-  maxDailyTrades: 50,
-  minConfidence: 40,
-  confidenceThreshold: 40,
-  minTickInterval: 1000,
-  maxConsecutiveLosses: 5,
-  maxDailyLoss: 200,
-  maxDailyProfit: 500,
-  duration: 5,
-  scanInterval: 2000,
+  stake: 1,
+  targetProfit: 20,
+  stopLoss: 30,
+  maxTrades: 30,
+  maxDailyTrades: 30,
+  minConfidence: 75,
+  confidenceThreshold: 75,
+  minTickInterval: 2500,
+  maxConsecutiveLosses: 3,
+  maxDailyLoss: 30,
+  maxDailyProfit: 50,
+  duration: 1,
+  scanInterval: 3000,
   symbols: [],
   markets: [],
   tradeTypes: ['DIGITDIFF', 'DIGITMATCH', 'DIGITOVER', 'DIGITUNDER'],
   strategies: ['over2', 'under8'],
   over2Enabled: true,
   under8Enabled: true,
-  overUnderStrategy: true,
+  overUnderStrategy: false,
   overThreshold: 2,
   underThreshold: 8,
 };
@@ -175,6 +176,7 @@ export class AIBotEngine {
   private signals: TradeSignal[] = [];
   private tradeHistory: TradeRecord[] = [];
   private priceHistory: Map<string, number[]> = new Map();
+  private pipSizeMap: Map<string, number> = new Map();
   private lastAnalysis: Map<string, MarketAnalysis> = new Map();
   private lastTradeTime = 0;
   private consecutiveLosses = 0;
@@ -247,11 +249,20 @@ export class AIBotEngine {
     this.onActivity?.(full);
   }
 
-  updatePriceHistory(symbol: string, price: number) {
+  updatePriceHistory(symbol: string, price: number, pipSize?: number) {
     const h = this.priceHistory.get(symbol) ?? [];
     h.push(price);
     if (h.length > 1000) h.shift();
     this.priceHistory.set(symbol, h);
+    if (pipSize !== undefined) this.pipSizeMap.set(symbol, pipSize);
+  }
+
+  private getPipSize(symbol: string): number {
+    return this.pipSizeMap.get(symbol) ?? 2;
+  }
+
+  private getDigit(symbol: string, price: number): number {
+    return getLastDigit(price, this.getPipSize(symbol));
   }
 
   start(symbols: string[]) {
@@ -330,7 +341,8 @@ export class AIBotEngine {
     if (lastDigit > 2 || secondLastDigit > 2) return null;
 
     const history = this.priceHistory.get(symbol) ?? [];
-    const recentDigits = history.slice(-10).map(p => parseInt(p.toFixed(2).slice(-1), 10));
+    const pip = this.getPipSize(symbol);
+    const recentDigits = history.slice(-10).map(p => getLastDigit(p, pip));
     const lowCount = recentDigits.filter(d => d <= 2).length;
     const veryLowCount = recentDigits.filter(d => d <= 1).length;
 
@@ -378,7 +390,8 @@ export class AIBotEngine {
     if (lastDigit < 7 || secondLastDigit < 7) return null;
 
     const history = this.priceHistory.get(symbol) ?? [];
-    const recentDigits = history.slice(-10).map(p => parseInt(p.toFixed(2).slice(-1), 10));
+    const pip = this.getPipSize(symbol);
+    const recentDigits = history.slice(-10).map(p => getLastDigit(p, pip));
     const highCount = recentDigits.filter(d => d >= 7).length;
     const veryHighCount = recentDigits.filter(d => d >= 8).length;
 
@@ -430,8 +443,8 @@ export class AIBotEngine {
 
   analyzeMarket(symbol: string, digitStats: DigitStats, lastDigit: number, lastPrice: number): MarketAnalysis {
     const history = this.priceHistory.get(symbol) ?? [];
-    const patterns = this.detectPatterns(history, digitStats);
-    const streaks = this.analyzeStreaks(history);
+    const patterns = this.detectPatterns(history, digitStats, symbol);
+    const streaks = this.analyzeStreaks(history, symbol);
     const volatility = this.calculateVolatility(history);
     const trend = this.analyzeTrend(history);
     const chiSquare = this.calculateChiSquare(digitStats);
@@ -456,7 +469,8 @@ export class AIBotEngine {
     if (digitStats.totalTicks < 10) return null;
 
     const history = this.priceHistory.get(symbol) ?? [];
-    const recentDigits = history.slice(-20).map(p => parseInt(p.toFixed(2).slice(-1), 10));
+    const pip = this.getPipSize(symbol);
+    const recentDigits = history.slice(-20).map(p => getLastDigit(p, pip));
     const lastDigit = recentDigits[recentDigits.length - 1] ?? 0;
 
     const reasons: string[] = [];
@@ -578,8 +592,8 @@ export class AIBotEngine {
     else riskLevel = 'EXTREME';
 
     let signalType: SignalType;
-    if (confidence >= 45) signalType = confidence >= 70 ? 'STRONG_BUY' : 'BUY';
-    else if (confidence >= 35) signalType = 'WAIT';
+    if (confidence >= 75) signalType = confidence >= 85 ? 'STRONG_BUY' : 'BUY';
+    else if (confidence >= 60) signalType = 'WAIT';
     else signalType = 'SELL';
 
     if (signalType === 'WAIT' || signalType === 'SELL') return null;
@@ -671,10 +685,11 @@ export class AIBotEngine {
     return null;
   }
 
-  private detectPatterns(history: number[], stats: DigitStats): PatternResult[] {
+  private detectPatterns(history: number[], stats: DigitStats, symbol?: string): PatternResult[] {
     const patterns: PatternResult[] = [];
     if (history.length < 10) return patterns;
-    const digitSequence = history.slice(-30).map(p => parseInt(p.toFixed(2).slice(-1), 10));
+    const pip = symbol ? this.getPipSize(symbol) : 2;
+    const digitSequence = history.slice(-30).map(p => getLastDigit(p, pip));
     const consecutive = this.findConsecutivePattern(digitSequence);
     if (consecutive) patterns.push({ type: 'CONSECUTIVE', confidence: 65, description: consecutive.description, predictedNext: consecutive.predicted });
     const hotCold = this.findHotColdDigits(stats);
@@ -704,22 +719,23 @@ export class AIBotEngine {
     return null;
   }
 
-  private analyzeStreaks(history: number[]): StreakInfo {
+  private analyzeStreaks(history: number[], symbol?: string): StreakInfo {
     if (history.length === 0) return { currentDigit: 0, streakLength: 0, isBreaking: false, longestStreak: 0 };
+    const pip = symbol ? this.getPipSize(symbol) : 2;
     const lastPrice = history[history.length - 1];
-    const lastDigit = parseInt(lastPrice.toFixed(2).slice(-1), 10);
+    const lastDigit = getLastDigit(lastPrice, pip);
     let streakLength = 1;
     let longestStreak = 1;
     let currentRun = 1;
     for (let i = history.length - 2; i >= 0; i--) {
-      const d = parseInt(history[i].toFixed(2).slice(-1), 10);
+      const d = getLastDigit(history[i], pip);
       if (d === lastDigit && i >= history.length - 1 - streakLength) streakLength++;
       if (i > 0) {
-        const prev = parseInt(history[i - 1].toFixed(2).slice(-1), 10);
+        const prev = getLastDigit(history[i - 1], pip);
         if (d === prev) { currentRun++; longestStreak = Math.max(longestStreak, currentRun); } else currentRun = 1;
       }
     }
-    const isBreaking = history.length >= 2 && parseInt(history[history.length - 2].toFixed(2).slice(-1), 10) !== lastDigit && streakLength === 1;
+    const isBreaking = history.length >= 2 && getLastDigit(history[history.length - 2], pip) !== lastDigit && streakLength === 1;
     return { currentDigit: lastDigit, streakLength, isBreaking, longestStreak };
   }
 

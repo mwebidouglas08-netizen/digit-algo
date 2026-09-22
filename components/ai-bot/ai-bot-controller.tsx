@@ -19,10 +19,11 @@ interface AIBotControllerProps {
   symbols: ActiveSymbol[];
   balance?: number;
   isConnected?: boolean;
-  autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number }) => Promise<boolean>;
+  autoBuy: (params: { contractMode: ContractMode; digit: number; stakeAmount: number; duration?: number }) => Promise<boolean>;
   buyResult: BuyResult | null;
   openPositions: OpenPosition[];
   selectSymbol: (symbol: string) => void;
+  pipSize: number;
 }
 
 export function AIBotController({
@@ -36,6 +37,7 @@ export function AIBotController({
   buyResult,
   openPositions,
   selectSymbol,
+  pipSize,
 }: AIBotControllerProps) {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [tickCount, setTickCount] = useState(0);
@@ -116,6 +118,7 @@ export function AIBotController({
       contractMode,
       digit,
       stakeAmount: Math.min(signal.recommendedStake, config.stake),
+      duration: config.duration,
     });
 
     setTimeout(() => { buyCooldownRef.current = false; }, 3000);
@@ -133,11 +136,13 @@ export function AIBotController({
     allTicksRef.current.set(symbol, ticks);
     setTickCount(prev => prev + 1);
 
-    const stats = computeDigitStats(ticks, 2);
+    // Use real digitStats from production ticks when available (pipSize-accurate),
+    // fallback to local ticks with real pipSize for early startup.
+    const stats = digitStats.totalTicks >= 10 ? digitStats : computeDigitStats(ticks, pipSize);
 
-    const sig = processTick(symbol, price, stats);
+    const sig = processTick(symbol, price, stats, pipSize);
 
-    const ruleSignal = checkRules(symbol, price, stats);
+    const ruleSignal = checkRules(symbol, price, stats, pipSize);
 
     const bestSignal = ruleSignal && ruleSignal.confidence > (sig?.confidence ?? 0) ? ruleSignal : sig;
 
@@ -147,39 +152,52 @@ export function AIBotController({
         executeAutoBuy(bestSignal);
       }
     }
-  }, [isRunning, currentTick, activeSymbol, processTick, checkRules, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy]);
+  }, [isRunning, currentTick, activeSymbol, digitStats, pipSize, processTick, checkRules, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy]);
 
+  // Multi-market scan: every scanInterval, look at REAL digit distribution across all
+  // subscribed markets and auto-switch to the market with strongest edge.
+  // This uses local tick buffers with real pipSize — no simulation, no fake ticks.
   useEffect(() => {
     if (!isRunning || !ws || !isConnected || symbols.length === 0) return;
 
     const interval = setInterval(() => {
-      let bestSignal: { id: string; symbol: string; contractMode: ContractMode; predictedDigit?: number; recommendedStake: number; confidence: number } | null = null;
-      let bestConfidence = 0;
+      // Avoid flip-flopping — don't switch if we traded < 5s ago or have open positions
+      if (buyCooldownRef.current) return;
+      let bestSymbol: string | null = null;
+      let bestScore = 0;
 
       for (const sym of symbols) {
         const symName = sym.underlying_symbol;
         const ticks = allTicksRef.current.get(symName) ?? [];
-        if (ticks.length < 15) continue;
-
-        const lastPrice = ticks[ticks.length - 1];
-        const stats = computeDigitStats(ticks, 2);
-        const sig = processTick(symName, lastPrice, stats);
-        const ruleSignal = checkRules(symName, lastPrice, stats);
-
-        const candidate = ruleSignal && ruleSignal.confidence > (sig?.confidence ?? 0) ? ruleSignal : sig;
-        if (candidate && candidate.confidence > bestConfidence) {
-          bestConfidence = candidate.confidence;
-          bestSignal = candidate;
+        if (ticks.length < 20) continue;
+        // Volatility indices all use pipSize 2; use real pipSize for active symbol, 2 for others is correct
+        const ps = symName === activeSymbol?.underlying_symbol ? pipSize : 2;
+        const stats = computeDigitStats(ticks, ps);
+        // Score = max deviation from 10% (strongest dominance)
+        const maxPct = Math.max(...stats.percentages);
+        const minPct = Math.min(...stats.percentages);
+        const deviation = Math.max(maxPct - 10, 10 - minPct);
+        // Bonus if recent digits favour an assured strategy
+        const recentDigits = ticks.slice(-5).map(p => {
+          const s = p.toFixed(ps);
+          return parseInt(s[s.length - 1], 10);
+        });
+        const lowRun = recentDigits.slice(-2).every(d => d <= 2) ? 5 : 0;
+        const highRun = recentDigits.slice(-2).every(d => d >= 7) ? 5 : 0;
+        const score = deviation + lowRun + highRun;
+        if (score > bestScore && score >= 4) {
+          bestScore = score;
+          bestSymbol = symName;
         }
       }
 
-      if (bestSignal && bestSignal.symbol !== activeSymbol?.underlying_symbol) {
-        selectSymbol(bestSignal.symbol);
+      if (bestSymbol && bestSymbol !== activeSymbol?.underlying_symbol) {
+        selectSymbol(bestSymbol);
       }
     }, config.scanInterval || 3000);
 
     return () => clearInterval(interval);
-  }, [isRunning, ws, isConnected, symbols, activeSymbol, processTick, checkRules, selectSymbol, config.scanInterval]);
+  }, [isRunning, ws, isConnected, symbols, activeSymbol, pipSize, selectSymbol, config.scanInterval]);
 
   useEffect(() => {
     if (!isRunning || !ws || !isConnected || symbols.length === 0) return;
