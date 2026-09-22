@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import type { BotConfig, BotActivity, Signal, TradeRecord, DailyStats, MarketAnalysis } from './ai-bot-engine';
+import type { BotConfig, BotActivity, TradeSignal, TradeRecord, DailyStats, MarketAnalysis } from './ai-bot-engine';
 
 interface AIBotPanelProps {
   isOpen: boolean;
@@ -21,7 +21,7 @@ interface AIBotPanelProps {
   isRunning: boolean;
   config: BotConfig;
   activities: BotActivity[];
-  signals: Signal[];
+  signals: TradeSignal[];
   tradeHistory: TradeRecord[];
   dailyStats: DailyStats;
   lastAnalysis: MarketAnalysis | null;
