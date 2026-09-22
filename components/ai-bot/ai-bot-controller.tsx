@@ -1,13 +1,15 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AIBotPanel } from './ai-bot-panel';
 import { useAIBot } from './use-ai-bot';
+import { useDerivWSContext } from '@/components/custom/deriv-ws-provider';
 import { cn } from '@/lib/utils';
 import type { ActiveSymbol, Tick } from '@deriv/core';
 import type { DigitStats } from '@/lib/types';
+import { computeDigitStats } from '@/lib/digit-stats';
 
 interface AIBotControllerProps {
   activeSymbol: ActiveSymbol | null;
@@ -16,7 +18,9 @@ interface AIBotControllerProps {
   symbols: ActiveSymbol[];
   balance?: number;
   isConnected?: boolean;
-  onBuy?: (signal: { contractMode: string; digit?: number; stake: number }) => void;
+  onBuy: () => void;
+  stake?: number;
+  duration?: number;
 }
 
 export function AIBotController({
@@ -27,9 +31,14 @@ export function AIBotController({
   balance = 0,
   isConnected = false,
   onBuy,
+  stake = 1,
+  duration = 5,
 }: AIBotControllerProps) {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [tickCount, setTickCount] = useState(0);
+  const { ws } = useDerivWSContext();
+  const allTicksRef = useRef<Map<string, number[]>>(new Map());
+  const subscriptionsRef = useRef<Map<string, () => void>>(new Map());
 
   const {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
@@ -40,27 +49,77 @@ export function AIBotController({
 
   const handleStart = useCallback(() => {
     const volSymbols = symbols
-      .filter(s => s.underlying_symbol.startsWith('Volatility'))
+      .filter(s => s.underlying_symbol.toLowerCase().includes('volatility'))
       .map(s => s.underlying_symbol);
-    const allSymbols = volSymbols.length > 0 ? volSymbols : symbols.map(s => s.underlying_symbol);
-    startBot(allSymbols);
+    const finalSymbols = volSymbols.length > 0 ? volSymbols : symbols.map(s => s.underlying_symbol);
+    startBot(finalSymbols);
   }, [symbols, startBot]);
 
-  useEffect(() => {
-    if (!isRunning || !currentTick || !activeSymbol) return;
-    setTickCount(prev => prev + 1);
-    const signal = processTick(activeSymbol.underlying_symbol, currentTick.quote, digitStats);
-    if (signal && config.autoTrade) {
-      const tradeCheck = prepareTrade(signal, balance);
-      if (tradeCheck.willTrade && onBuy) {
-        onBuy({
-          contractMode: signal.contractMode,
-          digit: signal.predictedDigit,
-          stake: tradeCheck.stake,
-        });
-      }
+  const handleAutoBuy = useCallback(() => {
+    if (config.autoTrade) {
+      onBuy();
     }
-  }, [isRunning, currentTick, activeSymbol, digitStats, processTick, prepareTrade, balance, config.autoTrade, onBuy]);
+  }, [config.autoTrade, onBuy]);
+
+  useEffect(() => {
+    if (!isRunning || !ws || !isConnected) return;
+
+    const processAllTicks = (symbol: string, price: number) => {
+      const ticks = allTicksRef.current.get(symbol) ?? [];
+      ticks.push(price);
+      if (ticks.length > 200) ticks.shift();
+      allTicksRef.current.set(symbol, ticks);
+
+      setTickCount(prev => prev + 1);
+
+      const stats = computeDigitStats(ticks, 2);
+      const sig = processTick(symbol, price, stats);
+      if (sig && config.autoTrade) {
+        const check = prepareTrade(sig, balance);
+        if (check.willTrade) {
+          handleAutoBuy();
+        }
+      }
+    };
+
+    if (currentTick && activeSymbol) {
+      processAllTicks(activeSymbol.underlying_symbol, currentTick.quote);
+    }
+
+    return () => {};
+  }, [isRunning, currentTick, activeSymbol, ws, isConnected, processTick, prepareTrade, balance, config.autoTrade, handleAutoBuy]);
+
+  useEffect(() => {
+    if (!isRunning || !ws || !isConnected || symbols.length === 0) return;
+    if (subscriptionsRef.current.size > 0) return;
+
+    symbols.forEach(symbol => {
+      const sym = symbol.underlying_symbol;
+      if (subscriptionsRef.current.has(sym)) return;
+
+      ws.subscribe({
+        ticks_history: sym,
+        adjust_start_time: 1,
+        count: 200,
+        end: 'latest',
+        style: 'ticks',
+      }, (data: Record<string, unknown>) => {
+        const tickData = data.tick as { quote?: number } | undefined;
+        if (tickData?.quote !== undefined) {
+          const ticks = allTicksRef.current.get(sym) ?? [];
+          ticks.push(tickData.quote);
+          if (ticks.length > 200) ticks.shift();
+          allTicksRef.current.set(sym, ticks);
+        }
+      }).then(result => {
+        if (result.subscriptionId) {
+          subscriptionsRef.current.set(sym, result.unsubscribe);
+        }
+      }).catch(() => {});
+    });
+
+    return () => {};
+  }, [isRunning, ws, isConnected, symbols]);
 
   return (
     <>
@@ -69,7 +128,7 @@ export function AIBotController({
         size="sm"
         onClick={() => setIsPanelOpen(true)}
         className={cn(
-          "relative gap-2 h-9 px-3 font-semibold",
+          "relative gap-2 h-9 px-3 font-semibold shrink-0",
           isRunning
             ? "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/25"
             : "border-emerald-500/50 text-emerald-600 hover:bg-emerald-500/10"
@@ -82,7 +141,7 @@ export function AIBotController({
           </span>
         )}
         <Zap className="h-4 w-4" />
-        <span>AI Bot</span>
+        <span className="hidden sm:inline">AI Bot</span>
       </Button>
 
       {isPanelOpen && (

@@ -139,13 +139,13 @@ const DEFAULT_CONFIG: BotConfig = {
   targetProfit: 50,
   stopLoss: 100,
   maxTrades: 50,
-  minConfidence: 70,
-  minTickInterval: 2000,
+  minConfidence: 55,
+  minTickInterval: 1000,
   maxConsecutiveLosses: 5,
   maxDailyLoss: 200,
   maxDailyProfit: 500,
   duration: 5,
-  scanInterval: 3000,
+  scanInterval: 2000,
   symbols: [],
   tradeTypes: ['DIGITDIFF', 'DIGITMATCH', 'DIGITOVER', 'DIGITUNDER'],
   overUnderStrategy: true,
@@ -398,7 +398,7 @@ export class AIBotEngine {
   generateSignal(analysis: MarketAnalysis, balance: number): TradeSignal | null {
     const { symbol, digitStats, patterns, streaks, volatility, trend, chiSquare, entropy, zScore, overUnderSignal, lastPrice } = analysis;
 
-    if (digitStats.totalTicks < 30) {
+    if (digitStats.totalTicks < 15) {
       return null;
     }
 
@@ -422,12 +422,12 @@ export class AIBotEngine {
       value: `${deviation.toFixed(1)}% from uniform`,
       bullish: deviation > 2,
     });
-    if (deviation > 3) {
+    if (deviation > 2) {
       confidence += 8;
       reasons.push(`High digit deviation (${deviation.toFixed(1)}%) from uniform distribution`);
     }
 
-    if (chiSquare > 15) {
+    if (chiSquare > 12) {
       confidence += 10;
       indicators.push({ name: 'Chi-Square', value: chiSquare.toFixed(1), bullish: true });
       reasons.push(`Chi-square test shows significant digit non-uniformity (χ²=${chiSquare.toFixed(1)})`);
@@ -435,7 +435,7 @@ export class AIBotEngine {
       indicators.push({ name: 'Chi-Square', value: chiSquare.toFixed(1), bullish: false });
     }
 
-    if (entropy < 3.0) {
+    if (entropy < 3.2) {
       confidence += 8;
       indicators.push({ name: 'Entropy', value: entropy.toFixed(2), bullish: true });
       reasons.push(`Low entropy (${entropy.toFixed(2)}) indicates non-random digit distribution`);
@@ -443,16 +443,16 @@ export class AIBotEngine {
       indicators.push({ name: 'Entropy', value: entropy.toFixed(2), bullish: false });
     }
 
-    if (Math.abs(zScore) > 2) {
+    if (Math.abs(zScore) > 1.5) {
       confidence += 7;
-      indicators.push({ name: 'Z-Score', value: zScore.toFixed(2), bullish: Math.abs(zScore) > 2 });
+      indicators.push({ name: 'Z-Score', value: zScore.toFixed(2), bullish: Math.abs(zScore) > 1.5 });
       reasons.push(`Z-score of ${zScore.toFixed(2)} indicates statistically significant deviation`);
     } else {
       indicators.push({ name: 'Z-Score', value: zScore.toFixed(2), bullish: false });
     }
 
     for (const pattern of patterns) {
-      if (pattern.confidence > 65) {
+      if (pattern.confidence > 50) {
         confidence += pattern.confidence * 0.12;
         reasons.push(pattern.description);
         if (pattern.predictedNext !== undefined) {
@@ -461,7 +461,7 @@ export class AIBotEngine {
       }
     }
 
-    if (streaks.streakLength >= 4 && streaks.isBreaking) {
+    if (streaks.streakLength >= 3 && streaks.isBreaking) {
       confidence += 10;
       reasons.push(`${streaks.streakLength}-digit streak of ${streaks.currentDigit} detected, reversal likely`);
       indicators.push({ name: 'Streak Break', value: `${streaks.streakLength}x ${streaks.currentDigit}`, bullish: true });
@@ -500,13 +500,13 @@ export class AIBotEngine {
         value: `${overUnderSignal.confidence.toFixed(0)}% conf`,
         bullish: true,
       });
-    } else if (highestPct > 13) {
+    } else if (highestPct > 12) {
       contractMode = 'DIGITMATCH';
       predictedDigit = highestDigit;
       direction = `Match ${highestDigit}`;
       confidence += 8;
       reasons.push(`Digit ${highestDigit} over-represented at ${highestPct.toFixed(1)}%`);
-    } else if (lowestPct < 7) {
+    } else if (lowestPct < 8) {
       contractMode = 'DIGITDIFF';
       direction = `Differ from ${lowestDigit}`;
       confidence += 6;
@@ -520,9 +520,9 @@ export class AIBotEngine {
     else riskLevel = 'EXTREME';
 
     let signalType: SignalType;
-    if (confidence >= this.config.minConfidence && confidence >= 70) {
-      signalType = confidence >= 85 ? 'STRONG_BUY' : 'BUY';
-    } else if (confidence >= 55) {
+    if (confidence >= this.config.minConfidence && confidence >= 55) {
+      signalType = confidence >= 75 ? 'STRONG_BUY' : 'BUY';
+    } else if (confidence >= 45) {
       signalType = 'WAIT';
     } else {
       signalType = 'SELL';
@@ -644,7 +644,7 @@ export class AIBotEngine {
   }
 
   private detectOverUnderSignal(stats: DigitStats, history: number[]): OverUnderSignal | null {
-    if (stats.totalTicks < 50 || !this.config.overUnderStrategy) return null;
+    if (stats.totalTicks < 20 || !this.config.overUnderStrategy) return null;
 
     const overCount = stats.counts.slice(this.config.overThreshold + 1).reduce((a, b) => a + b, 0);
     const overPct = (overCount / stats.totalTicks) * 100;
@@ -655,19 +655,19 @@ export class AIBotEngine {
     const expectedOver = (10 - this.config.overThreshold) * 10;
     const expectedUnder = this.config.underThreshold * 10;
 
-    if (overPct > expectedOver + 5) {
+    if (overPct > expectedOver + 3) {
       return {
         type: 'OVER_2',
-        confidence: Math.min(85, 50 + (overPct - expectedOver)),
+        confidence: Math.min(85, 55 + (overPct - expectedOver)),
         digitFrequency: overPct,
         reason: `Digit >${this.config.overThreshold} appears ${overPct.toFixed(1)}% (expected ${expectedOver}%) — OVER ${this.config.overThreshold} strategy`,
       };
     }
 
-    if (underPct > expectedUnder + 5) {
+    if (underPct > expectedUnder + 3) {
       return {
         type: 'UNDER_8',
-        confidence: Math.min(85, 50 + (underPct - expectedUnder)),
+        confidence: Math.min(85, 55 + (underPct - expectedUnder)),
         digitFrequency: underPct,
         reason: `Digit <${this.config.underThreshold} appears ${underPct.toFixed(1)}% (expected ${expectedUnder}%) — UNDER ${this.config.underThreshold} strategy`,
       };
@@ -702,12 +702,12 @@ export class AIBotEngine {
 
     const hotCold = this.findHotColdDigits(stats);
     if (hotCold) {
-      patterns.push({ type: 'HOTSPOT', confidence: 55, description: hotCold.description, predictedNext: hotCold.predicted });
+      patterns.push({ type: 'HOTSPOT', confidence: 60, description: hotCold.description, predictedNext: hotCold.predicted });
     }
 
     const overdue = this.findOverdueDigits(stats);
     if (overdue) {
-      patterns.push({ type: 'OVERDUE', confidence: 50, description: overdue.description, predictedNext: overdue.predicted });
+      patterns.push({ type: 'OVERDUE', confidence: 55, description: overdue.description, predictedNext: overdue.predicted });
     }
 
     return patterns;
@@ -722,7 +722,7 @@ export class AIBotEngine {
         if (currentRun > maxRun) { maxRun = currentRun; runDigit = seq[i]; }
       } else { currentRun = 1; }
     }
-    return maxRun >= 3 ? { description: `${maxRun} consecutive ${runDigit}s detected`, predicted: runDigit } : null;
+    return maxRun >= 2 ? { description: `${maxRun} consecutive ${runDigit}s detected`, predicted: runDigit } : null;
   }
 
   private findAlternatingPattern(seq: number[]): { description: string } | null {
@@ -751,11 +751,11 @@ export class AIBotEngine {
   }
 
   private findHotColdDigits(stats: DigitStats): { description: string; predicted?: number } | null {
-    if (stats.totalTicks < 30) return null;
+    if (stats.totalTicks < 20) return null;
     const hot: number[] = [], cold: number[] = [];
     for (let i = 0; i < 10; i++) {
-      if (stats.percentages[i] > 13) hot.push(i);
-      else if (stats.percentages[i] < 7) cold.push(i);
+      if (stats.percentages[i] > 12) hot.push(i);
+      else if (stats.percentages[i] < 8) cold.push(i);
     }
     if (hot.length > 0) return { description: `Hot digits: ${hot.join(', ')}`, predicted: hot[0] };
     if (cold.length > 0) return { description: `Cold digits (overdue): ${cold.join(', ')}`, predicted: cold[0] };
@@ -763,11 +763,11 @@ export class AIBotEngine {
   }
 
   private findOverdueDigits(stats: DigitStats): { description: string; predicted?: number } | null {
-    if (stats.totalTicks < 50) return null;
+    if (stats.totalTicks < 20) return null;
     const overdue: { digit: number; deficit: number }[] = [];
     for (let i = 0; i < 10; i++) {
       const deficit = 10 - stats.percentages[i];
-      if (deficit > 3) overdue.push({ digit: i, deficit });
+      if (deficit > 2) overdue.push({ digit: i, deficit });
     }
     if (overdue.length > 0) {
       overdue.sort((a, b) => b.deficit - a.deficit);

@@ -1,23 +1,19 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
-  X, Play, Pause, Settings, Activity, TrendingUp, Zap, BarChart3,
-  AlertTriangle, Clock, Target, CheckCircle2,
-  XCircle, History, Brain, DollarSign, StopCircle, RotateCcw, Eye,
+  Zap, Settings, BarChart3, History, TrendingUp,
+  AlertTriangle, X, Play, Pause, ChevronDown, ChevronUp,
+  Shield, Target, Clock, Activity, DollarSign,
+  TrendingDown, Minus, Plus, RefreshCw, Wifi, WifiOff
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import type {
-  BotActivity, TradeSignal, BotConfig, MarketAnalysis, TradeRecord, DailyStats,
-  RiskLevel,
-} from './ai-bot-engine';
+import type { BotConfig, BotActivity, Signal, TradeRecord, DailyStats, MarketAnalysis } from './ai-bot-engine';
 
 interface AIBotPanelProps {
   isOpen: boolean;
@@ -25,528 +21,636 @@ interface AIBotPanelProps {
   isRunning: boolean;
   config: BotConfig;
   activities: BotActivity[];
-  signals: TradeSignal[];
+  signals: Signal[];
   tradeHistory: TradeRecord[];
   dailyStats: DailyStats;
   lastAnalysis: MarketAnalysis | null;
   emergencyStop: boolean;
   onStart: () => void;
   onStop: () => void;
-  onUpdateConfig: (config: Partial<BotConfig>) => void;
+  onUpdateConfig: (updates: Partial<BotConfig>) => void;
   onEmergencyStop: () => void;
   onResetEmergencyStop: () => void;
-  balance?: number;
-  tickCount?: number;
-  currentSymbol?: string | null;
-  isConnected?: boolean;
+  balance: number;
+  tickCount: number;
+  currentSymbol: string | null;
+  isConnected: boolean;
 }
 
 type Tab = 'dashboard' | 'signals' | 'history' | 'settings';
 
-const fmt = (t: number) => new Date(t).toLocaleTimeString();
-const fmtDate = (t: number) => new Date(t).toLocaleString();
+const ALL_MARKETS = [
+  { id: 'Volatility 10', label: 'Vol 10' },
+  { id: 'Volatility 25', label: 'Vol 25' },
+  { id: 'Volatility 50', label: 'Vol 50' },
+  { id: 'Volatility 75', label: 'Vol 75' },
+  { id: 'Volatility 100', label: 'Vol 100' },
+  { id: 'Volatility 10 (1s)', label: 'Vol 10 (1s)' },
+  { id: 'Volatility 25 (1s)', label: 'Vol 25 (1s)' },
+  { id: 'Volatility 50 (1s)', label: 'Vol 50 (1s)' },
+  { id: 'Volatility 75 (1s)', label: 'Vol 75 (1s)' },
+  { id: 'Volatility 100 (1s)', label: 'Vol 100 (1s)' },
+  { id: 'Boom 1000', label: 'Boom 1000' },
+  { id: 'Boom 500', label: 'Boom 500' },
+  { id: 'Boom 300', label: 'Boom 300' },
+  { id: 'Crash 1000', label: 'Crash 1000' },
+  { id: 'Crash 500', label: 'Crash 500' },
+  { id: 'Crash 300', label: 'Crash 300' },
+  { id: 'Jump 10', label: 'Jump 10' },
+  { id: 'Jump 25', label: 'Jump 25' },
+  { id: 'Jump 50', label: 'Jump 50' },
+  { id: 'Jump 75', label: 'Jump 75' },
+  { id: 'Jump 100', label: 'Jump 100' },
+];
 
-function signalBadgeClass(type: string): string {
-  switch (type) {
-    case 'STRONG_BUY': return 'bg-emerald-500 text-white';
-    case 'BUY': return 'bg-emerald-400 text-white';
-    case 'WAIT': return 'bg-yellow-400 text-black';
-    case 'SELL': return 'bg-red-400 text-white';
-    case 'STRONG_SELL': return 'bg-red-500 text-white';
-    default: return 'bg-gray-400 text-white';
-  }
-}
-
-function riskBadgeClass(level: RiskLevel): string {
-  switch (level) {
-    case 'LOW': return 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30';
-    case 'MEDIUM': return 'bg-yellow-500/15 text-yellow-600 border-yellow-500/30';
-    case 'HIGH': return 'bg-orange-500/15 text-orange-600 border-orange-500/30';
-    case 'EXTREME': return 'bg-red-500/15 text-red-600 border-red-500/30';
-  }
-}
-
-function resultIcon(result: string) {
-  switch (result) {
-    case 'WIN': return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
-    case 'LOSS': return <XCircle className="h-4 w-4 text-red-500" />;
-    case 'PENDING': return <Clock className="h-4 w-4 text-yellow-500" />;
-    case 'REJECTED': return <XCircle className="h-4 w-4 text-gray-400" />;
-    default: return <XCircle className="h-4 w-4 text-gray-400" />;
-  }
-}
+const STRATEGIES = [
+  { id: 'hotspot', label: 'Hotspot Detection', desc: 'Buy when a digit appears more than expected' },
+  { id: 'mean_reversion', label: 'Mean Reversion', desc: 'Buy when a digit is overdue (cold)' },
+  { id: 'trend_following', label: 'Trend Following', desc: 'Follow the most common digit pattern' },
+  { id: 'over_under', label: 'Over/Under Hybrid', desc: 'Use Over/Under analysis to guide digit picks' },
+];
 
 export function AIBotPanel({
-  isOpen, onClose, isRunning, config, activities, signals, tradeHistory,
-  dailyStats, lastAnalysis, emergencyStop, onStart, onStop, onUpdateConfig,
-  onEmergencyStop, onResetEmergencyStop, balance = 0, tickCount = 0,
-  currentSymbol, isConnected = false,
+  isOpen, onClose, isRunning, config, activities, signals,
+  tradeHistory, dailyStats, lastAnalysis, emergencyStop,
+  onStart, onStop, onUpdateConfig, onEmergencyStop, onResetEmergencyStop,
+  balance, tickCount, currentSymbol, isConnected,
 }: AIBotPanelProps) {
-  const [tab, setTab] = useState<Tab>('dashboard');
-  const [selectedSignal, setSelectedSignal] = useState<TradeSignal | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [activeTab, setActiveTab] = useState<Tab>('dashboard');
+  const [settingsExpanded, setSettingsExpanded] = useState<Record<string, boolean>>({
+    trade: true, strategy: false, risk: false, markets: false,
+  });
+  const signalsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [activities]);
+    signalsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [signals.length]);
 
   if (!isOpen) return null;
 
-  const winRate = dailyStats.totalTrades > 0
-    ? ((dailyStats.wins / dailyStats.totalTrades) * 100).toFixed(1)
-    : '0.0';
+  const formatCurrency = (val: number) => `$${val.toFixed(2)}`;
+  const formatPct = (val: number) => `${val.toFixed(1)}%`;
+  const winRate = tradeHistory.length > 0
+    ? (tradeHistory.filter(t => t.result === 'win').length / tradeHistory.length) * 100
+    : 0;
+  const pnl = tradeHistory.reduce((sum, t) => sum + (t.profit ?? 0), 0);
+
+  const getSignalColor = (confidence: number) => {
+    if (confidence >= 0.75) return 'text-emerald-500';
+    if (confidence >= 0.55) return 'text-yellow-500';
+    return 'text-orange-400';
+  };
+
+  const getSignalBg = (confidence: number) => {
+    if (confidence >= 0.75) return 'bg-emerald-500/10 border-emerald-500/30';
+    if (confidence >= 0.55) return 'bg-yellow-500/10 border-yellow-500/30';
+    return 'bg-orange-500/10 border-orange-500/30';
+  };
+
+  const getReasonIcon = (reason: string) => {
+    if (reason.includes('Hot') || reason.includes('hot')) return <TrendingUp className="h-3 w-3 text-emerald-400" />;
+    if (reason.includes('Cold') || reason.includes('cold')) return <TrendingDown className="h-3 w-3 text-blue-400" />;
+    if (reason.includes('Trend') || reason.includes('trend')) return <Activity className="h-3 w-3 text-purple-400" />;
+    if (reason.includes('Over') || reason.includes('over')) return <Minus className="h-3 w-3 text-yellow-400" />;
+    return <Target className="h-3 w-3 text-orange-400" />;
+  };
+
+  const toggleMarket = (marketId: string) => {
+    const current = config.markets ?? ALL_MARKETS.map(m => m.id);
+    const updated = current.includes(marketId)
+      ? current.filter(m => m !== marketId)
+      : [...current, marketId];
+    onUpdateConfig({ markets: updated });
+  };
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="w-full sm:max-w-3xl max-h-[100dvh] sm:max-h-[90vh] flex flex-col bg-background sm:rounded-2xl rounded-t-2xl border border-border shadow-2xl overflow-hidden">
-
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b bg-background shrink-0">
-          <div className="flex items-center gap-3">
-            <div className={cn(
-              "flex h-9 w-9 items-center justify-center rounded-full shrink-0",
-              isRunning ? "bg-emerald-500/20" : emergencyStop ? "bg-red-500/20" : "bg-muted"
-            )}>
-              {emergencyStop ? (
-                <StopCircle className="h-5 w-5 text-red-500" />
+    <div className="fixed inset-0 z-50 flex flex-col bg-background">
+      <div className="flex items-center justify-between border-b px-3 py-2 sm:px-6 sm:py-3">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div className={cn(
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+            isRunning ? "bg-emerald-500" : "bg-muted"
+          )}>
+            <Zap className="h-4 w-4 text-white" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-sm sm:text-base font-bold truncate">AI Bot</h2>
+            <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs text-muted-foreground">
+              {isConnected ? (
+                <><Wifi className="h-3 w-3 text-emerald-500" /><span className="text-emerald-500 hidden sm:inline">Connected</span></>
               ) : (
-                <Zap className={cn("h-5 w-5", isRunning ? "text-emerald-500" : "text-muted-foreground")} />
+                <><WifiOff className="h-3 w-3 text-red-500" /><span className="text-red-500 hidden sm:inline">Offline</span></>
+              )}
+              {currentSymbol && (
+                <Badge variant="secondary" className="text-[10px] sm:text-xs px-1 sm:px-1.5 py-0">
+                  {currentSymbol.replace('volatility_', 'V').replace('Boom', 'B').replace('Crash', 'C').replace('Jump', 'J').replace('1000', '1k').replace('500', '5h').replace('300', '3h')}
+                </Badge>
               )}
             </div>
-            <div className="min-w-0">
-              <h2 className="text-sm sm:text-base font-bold truncate">AI Trading Bot</h2>
-              <p className="text-xs text-muted-foreground truncate">
-                {emergencyStop ? 'Emergency Stop Active' : isRunning ? `Scanning ${currentSymbol || '...'}` : 'Ready'}
-              </p>
-            </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {emergencyStop ? (
-              <Button variant="outline" size="sm" onClick={onResetEmergencyStop} className="text-xs">
-                <RotateCcw className="h-3 w-3 mr-1" /> Reset
-              </Button>
-            ) : (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={onEmergencyStop}
-                disabled={!isRunning}
-                className="text-xs"
-              >
-                <StopCircle className="h-3 w-3 mr-1" /> Emergency
-              </Button>
-            )}
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClose}>
-              <X className="h-4 w-4" />
+        </div>
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {emergencyStop && (
+            <Button variant="destructive" size="sm" onClick={onResetEmergencyStop}
+              className="h-8 px-2 sm:px-3 text-xs">
+              <RefreshCw className="h-3.5 w-3.5 sm:mr-1" /><span className="hidden sm:inline">Reset</span>
             </Button>
-          </div>
+          )}
+          <Button
+            variant={isRunning ? 'destructive' : 'default'}
+            size="sm"
+            onClick={isRunning ? onStop : onStart}
+            className={cn("h-8 px-2 sm:px-3 text-xs",
+              isRunning ? '' : 'bg-emerald-600 hover:bg-emerald-700'
+            )}
+          >
+            {isRunning ? <><Pause className="h-3.5 w-3.5 sm:mr-1" /><span className="hidden sm:inline">Stop</span></> : <><Play className="h-3.5 w-3.5 sm:mr-1" /><span className="hidden sm:inline">Start</span></>}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0">
+            <X className="h-4 w-4" />
+          </Button>
         </div>
+      </div>
 
-        {/* Status Bar */}
-        <div className="flex items-center gap-3 px-4 py-2 border-b bg-muted/30 text-xs shrink-0 overflow-x-auto">
-          <span className="flex items-center gap-1 shrink-0">
-            <span className={cn("h-2 w-2 rounded-full", isConnected ? "bg-emerald-500" : "bg-red-500")} />
-            {isConnected ? 'Connected' : 'Offline'}
-          </span>
-          <Separator orientation="vertical" className="h-3" />
-          <span className="shrink-0">Ticks: {tickCount}</span>
-          <Separator orientation="vertical" className="h-3" />
-          <span className="shrink-0">Balance: <b>${balance.toFixed(2)}</b></span>
-          <Separator orientation="vertical" className="h-3" />
-          <span className={cn("shrink-0 font-semibold", dailyStats.netPnl >= 0 ? "text-emerald-500" : "text-red-500")}>
-            PnL: ${dailyStats.netPnl.toFixed(2)}
-          </span>
-        </div>
+      <div className="flex border-b px-3 sm:px-6">
+        {([['dashboard', BarChart3], ['signals', Zap], ['history', History], ['settings', Settings]] as [Tab, typeof BarChart3][]).map(([tab, Icon]) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={cn(
+              "flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium border-b-2 transition-colors",
+              activeTab === tab
+                ? "border-emerald-500 text-emerald-600"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+            <span className="hidden xs:inline">{tab.charAt(0).toUpperCase() + tab.slice(1)}</span>
+          </button>
+        ))}
+      </div>
 
-        {/* Tabs */}
-        <div className="flex gap-1 px-4 pt-2 border-b overflow-x-auto shrink-0">
-          {([
-            { key: 'dashboard' as Tab, label: 'Dashboard', icon: BarChart3 },
-            { key: 'signals' as Tab, label: `Signals (${signals.length})`, icon: Zap },
-            { key: 'history' as Tab, label: `History (${tradeHistory.length})`, icon: History },
-            { key: 'settings' as Tab, label: 'Settings', icon: Settings },
-          ]).map(({ key, label, icon: Icon }) => (
-            <button
-              key={key}
-              onClick={() => { setTab(key); setSelectedSignal(null); }}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-lg transition-colors whitespace-nowrap",
-                tab === key
-                  ? "bg-background text-foreground border border-b-0 border-border"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              <Icon className="h-3.5 w-3.5" /> {label}
-            </button>
-          ))}
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto min-h-0">
-          {/* ── DASHBOARD ── */}
-          {tab === 'dashboard' && (
-            <div className="p-4 space-y-4">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <StatCard label="Trades Today" value={dailyStats.totalTrades} icon={<Target className="h-4 w-4 text-muted-foreground" />} />
-                <StatCard label="Win Rate" value={`${winRate}%`} icon={<TrendingUp className="h-4 w-4 text-muted-foreground" />} />
-                <StatCard label="Wins / Losses" value={`${dailyStats.wins}/${dailyStats.losses}`} icon={<Activity className="h-4 w-4 text-muted-foreground" />} />
-                <StatCard label="Net PnL" value={`$${dailyStats.netPnl.toFixed(2)}`}
-                  icon={<DollarSign className="h-4 w-4 text-muted-foreground" />}
-                  valueClass={dailyStats.netPnl >= 0 ? 'text-emerald-500' : 'text-red-500'} />
+      <ScrollArea className="flex-1 overflow-y-auto">
+        <div className="p-3 sm:p-4 space-y-3 sm:space-y-4">
+          {activeTab === 'dashboard' && (
+            <>
+              <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                {[
+                  { label: 'Balance', value: formatCurrency(balance), icon: DollarSign, color: 'text-emerald-500' },
+                  { label: 'P/L', value: formatCurrency(pnl), icon: pnl >= 0 ? TrendingUp : TrendingDown, color: pnl >= 0 ? 'text-emerald-500' : 'text-red-500' },
+                  { label: 'Win Rate', value: formatPct(winRate), icon: Target, color: 'text-blue-500' },
+                  { label: 'Trades', value: String(tradeHistory.length), icon: BarChart3, color: 'text-purple-500' },
+                  { label: 'Signals', value: String(signals.length), icon: Zap, color: 'text-yellow-500' },
+                  { label: 'Ticks', value: String(tickCount), icon: Activity, color: 'text-cyan-500' },
+                  { label: 'Streak', value: `${dailyStats.currentStreak}${dailyStats.currentStreak > 0 ? 'W' : 'L'}`, icon: TrendingUp, color: dailyStats.currentStreak > 0 ? 'text-emerald-500' : 'text-red-500' },
+                  { label: 'Daily', value: formatCurrency(dailyStats.dailyPnL), icon: DollarSign, color: dailyStats.dailyPnL >= 0 ? 'text-emerald-500' : 'text-red-500' },
+                ].map(({ label, value, icon: Icon, color }) => (
+                  <Card key={label} className="bg-card/50">
+                    <CardContent className="p-2.5 sm:p-3">
+                      <div className="flex items-center gap-1.5 sm:gap-2 mb-1">
+                        <Icon className={cn("h-3 w-3 sm:h-3.5 sm:w-3.5", color)} />
+                        <span className="text-[10px] sm:text-xs text-muted-foreground">{label}</span>
+                      </div>
+                      <div className={cn("text-sm sm:text-lg font-bold", color)}>{value}</div>
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
 
-              {emergencyStop && (
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-600 text-sm">
-                  <AlertTriangle className="h-4 w-4 shrink-0" />
-                  <span>Emergency stop is active. All auto-trading halted.</span>
-                </div>
+              {lastAnalysis && (
+                <Card className="bg-card/50">
+                  <CardHeader className="p-3 sm:p-4 pb-2">
+                    <CardTitle className="text-sm sm:text-base flex items-center gap-2">
+                      <Activity className="h-4 w-4 text-emerald-500" />
+                      Latest Analysis
+                      <Badge variant="secondary" className="ml-auto text-[10px]">{lastAnalysis.symbol}</Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-3 sm:p-4 pt-0 space-y-2 sm:space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <span className="text-[10px] sm:text-xs text-muted-foreground">Dominant Digit</span>
+                        <div className="text-xl sm:text-3xl font-bold text-emerald-500">{lastAnalysis.dominantDigit}</div>
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-[10px] sm:text-xs text-muted-foreground">Entropy</span>
+                        <div className="text-xl sm:text-3xl font-bold text-blue-500">{lastAnalysis.entropy.toFixed(3)}</div>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {lastAnalysis.digitFrequencies.map(([digit, freq]) => (
+                        <Badge
+                          key={digit}
+                          variant={digit === lastAnalysis.dominantDigit ? 'default' : 'secondary'}
+                          className={cn(
+                            "text-[10px] sm:text-xs px-1.5 sm:px-2",
+                            digit === lastAnalysis.dominantDigit
+                              ? "bg-emerald-500 text-white"
+                              : freq > 12 ? "bg-red-500/20 text-red-400"
+                              : freq < 8 ? "bg-blue-500/20 text-blue-400"
+                              : ""
+                          )}
+                        >
+                          {digit}: {freq}%
+                        </Badge>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
               )}
 
-              <div className="flex gap-2">
-                {isRunning ? (
-                  <Button variant="destructive" onClick={onStop} className="flex-1">
-                    <Pause className="h-4 w-4 mr-2" /> Stop Bot
-                  </Button>
-                ) : (
-                  <Button onClick={onStart} className="flex-1 bg-emerald-500 hover:bg-emerald-600" disabled={emergencyStop}>
-                    <Play className="h-4 w-4 mr-2" /> Start Bot
-                  </Button>
-                )}
-              </div>
-
-              {/* Latest Signal Detail */}
-              {signals.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Latest Signal</h3>
-                  <SignalCard signal={signals[0]} onSelect={() => { setSelectedSignal(signals[0]); setTab('signals'); }} />
-                </div>
-              )}
-
-              {/* Recent Activity */}
-              <div className="space-y-2">
-                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Recent Activity</h3>
-                <div className="space-y-1.5">
-                  {activities.slice(0, 8).map(a => (
-                    <ActivityRow key={a.id} activity={a} />
-                  ))}
-                  {activities.length === 0 && (
-                    <p className="text-xs text-muted-foreground text-center py-4">No activity yet.</p>
+              <Card className="bg-card/50">
+                <CardHeader className="p-3 sm:p-4 pb-2">
+                  <CardTitle className="text-sm sm:text-base flex items-center gap-2">
+                    <Zap className="h-4 w-4 text-yellow-500" />
+                    Recent Signals
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-3 sm:p-4 pt-0 space-y-2 max-h-48 sm:max-h-64 overflow-y-auto">
+                  {signals.length === 0 ? (
+                    <div className="text-center py-6 sm:py-8 text-muted-foreground text-xs sm:text-sm">
+                      {isRunning ? 'Scanning markets...' : 'Start bot to receive signals'}
+                    </div>
+                  ) : (
+                    signals.slice(-10).reverse().map((sig, i) => (
+                      <div key={sig.id || i} className={cn(
+                        "flex items-center justify-between rounded-lg border p-2 sm:p-2.5",
+                        getSignalBg(sig.confidence)
+                      )}>
+                        <div className="flex items-center gap-2 min-w-0">
+                          {getReasonIcon(sig.reason)}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-base sm:text-lg">{sig.digit}</span>
+                              <Badge variant="outline" className="text-[10px] px-1">{sig.type}</Badge>
+                            </div>
+                            <p className="text-[10px] sm:text-xs text-muted-foreground truncate">{sig.reason}</p>
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className={cn("text-xs sm:text-sm font-bold", getSignalColor(sig.confidence))}>
+                            {formatPct(sig.confidence * 100)}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">{sig.symbol.split('_').pop()}</div>
+                        </div>
+                      </div>
+                    ))
                   )}
-                </div>
-              </div>
-              <div ref={bottomRef} />
-            </div>
+                  <div ref={signalsEndRef} />
+                </CardContent>
+              </Card>
+            </>
           )}
 
-          {/* ── SIGNALS ── */}
-          {tab === 'signals' && (
-            <div className="p-4 space-y-3">
-              {selectedSignal ? (
-                <div className="space-y-3">
-                  <Button variant="ghost" size="sm" onClick={() => setSelectedSignal(null)} className="text-xs">
-                    ← Back to signals
-                  </Button>
-                  <SignalDetail signal={selectedSignal} />
+          {activeTab === 'signals' && (
+            <div className="space-y-2 sm:space-y-3">
+              {signals.length === 0 ? (
+                <div className="text-center py-10 sm:py-16 text-muted-foreground text-xs sm:text-sm">
+                  {isRunning ? 'Scanning markets for signals...' : 'Start the bot to begin signal detection'}
                 </div>
-              ) : signals.length === 0 ? (
-                <EmptyState message="No signals yet. Start the bot to begin scanning markets." />
               ) : (
-                signals.map(s => (
-                  <SignalCard key={s.id} signal={s} onSelect={() => setSelectedSignal(s)} />
+                signals.slice(-20).reverse().map((sig, i) => (
+                  <Card key={sig.id || i} className={cn("border", getSignalBg(sig.confidence))}>
+                    <CardContent className="p-3 sm:p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                          {getReasonIcon(sig.reason)}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                              <span className="text-xl sm:text-2xl font-bold">{sig.digit}</span>
+                              <Badge variant={sig.type === 'BUY' ? 'default' : 'secondary'} className="text-[10px] sm:text-xs">
+                                {sig.type}
+                              </Badge>
+                              {sig.type === 'OVER' || sig.type === 'UNDER' ? (
+                                <Badge variant="outline" className="text-[10px] sm:text-xs">{sig.type} {sig.digit}</Badge>
+                              ) : null}
+                            </div>
+                            <p className="text-xs sm:text-sm text-muted-foreground mt-1">{sig.reason}</p>
+                            <div className="flex items-center gap-2 sm:gap-3 mt-1.5 sm:mt-2 text-[10px] sm:text-xs text-muted-foreground flex-wrap">
+                              <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {sig.timestamp.toLocaleTimeString()}</span>
+                              <span>{sig.symbol}</span>
+                              <span className="font-mono">{sig.marketCondition}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className={cn("text-lg sm:text-xl font-bold", getSignalColor(sig.confidence))}>
+                            {formatPct(sig.confidence * 100)}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">confidence</div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
                 ))
               )}
             </div>
           )}
 
-          {/* ── HISTORY ── */}
-          {tab === 'history' && (
-            <div className="p-4 space-y-3">
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="p-2 rounded-lg bg-muted/50">
-                  <p className="text-lg font-bold">{dailyStats.totalTrades}</p>
-                  <p className="text-[10px] text-muted-foreground">Total</p>
-                </div>
-                <div className="p-2 rounded-lg bg-emerald-500/10">
-                  <p className="text-lg font-bold text-emerald-500">{dailyStats.wins}</p>
-                  <p className="text-[10px] text-muted-foreground">Wins</p>
-                </div>
-                <div className="p-2 rounded-lg bg-red-500/10">
-                  <p className="text-lg font-bold text-red-500">{dailyStats.losses}</p>
-                  <p className="text-[10px] text-muted-foreground">Losses</p>
-                </div>
-              </div>
-              {tradeHistory.length === 0 ? (
-                <EmptyState message="No trades recorded yet." />
-              ) : (
-                <div className="space-y-2">
-                  {tradeHistory.map(t => (
-                    <div key={t.id} className="flex items-center gap-3 p-3 rounded-lg border border-border text-sm">
-                      {resultIcon(t.result)}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium truncate">{t.symbol}</span>
-                          <Badge variant="outline" className="text-[10px]">{t.contractMode}</Badge>
-                          <Badge variant="outline" className={cn("text-[10px]", riskBadgeClass(t.riskLevel))}>{t.riskLevel}</Badge>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-0.5 truncate">{t.reason}</p>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-semibold">${t.stake.toFixed(2)}</p>
-                        <p className={cn("text-xs font-medium", t.profit >= 0 ? "text-emerald-500" : "text-red-500")}>
-                          {t.profit >= 0 ? '+' : ''}{t.profit.toFixed(2)}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground">{fmtDate(t.timestamp)}</p>
-                      </div>
+          {activeTab === 'history' && (
+            <div className="space-y-2 sm:space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <Card className="bg-card/50">
+                  <CardContent className="p-3">
+                    <div className="text-xs text-muted-foreground mb-1">Today&apos;s P/L</div>
+                    <div className={cn("text-lg font-bold", dailyStats.dailyPnL >= 0 ? 'text-emerald-500' : 'text-red-500')}>
+                      {formatCurrency(dailyStats.dailyPnL)}
                     </div>
-                  ))}
+                  </CardContent>
+                </Card>
+                <Card className="bg-card/50">
+                  <CardContent className="p-3">
+                    <div className="text-xs text-muted-foreground mb-1">Win Streak</div>
+                    <div className="text-lg font-bold text-blue-500">{dailyStats.currentStreak}</div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {tradeHistory.length === 0 ? (
+                <div className="text-center py-10 sm:py-16 text-muted-foreground text-xs sm:text-sm">
+                  No trades yet
                 </div>
+              ) : (
+                tradeHistory.slice(-20).reverse().map((trade, i) => (
+                  <Card key={trade.id || i} className="bg-card/50">
+                    <CardContent className="p-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-1.5 sm:gap-2">
+                            <span className="font-bold">{trade.digit}</span>
+                            <Badge variant={trade.result === 'win' ? 'default' : 'destructive'} className="text-[10px]">
+                              {trade.result}
+                            </Badge>
+                            <Badge variant="outline" className="text-[10px]">{trade.type}</Badge>
+                          </div>
+                          <div className="text-[10px] sm:text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                            <span>{trade.timestamp.toLocaleTimeString()}</span>
+                            <span>{trade.symbol}</span>
+                            <span>${trade.stake}</span>
+                          </div>
+                        </div>
+                        <div className={cn("text-sm sm:text-base font-bold",
+                          (trade.profit ?? 0) >= 0 ? 'text-emerald-500' : 'text-red-500'
+                        )}>
+                          {(trade.profit ?? 0) >= 0 ? '+' : ''}{formatCurrency(trade.profit ?? 0)}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
               )}
             </div>
           )}
 
-          {/* ── SETTINGS ── */}
-          {tab === 'settings' && (
-            <div className="p-4 space-y-4">
-              <SettingsSection title="Trading">
-                <SettingRow label="Stake Amount ($)" >
-                  <Input type="number" value={config.stake} min={1} max={1000}
-                    onChange={e => onUpdateConfig({ stake: Number(e.target.value) })} className="w-24 h-8 text-xs" />
-                </SettingRow>
-                <SettingRow label="Duration (ticks)">
-                  <Input type="number" value={config.duration} min={1} max={10}
-                    onChange={e => onUpdateConfig({ duration: Number(e.target.value) })} className="w-24 h-8 text-xs" />
-                </SettingRow>
-                <SettingRow label="Auto-Trade">
-                  <Switch checked={config.autoTrade} onCheckedChange={v => onUpdateConfig({ autoTrade: v })} />
-                </SettingRow>
-              </SettingsSection>
+          {activeTab === 'settings' && (
+            <div className="space-y-2 sm:space-y-3">
+              <Card className="bg-card/50">
+                <button
+                  onClick={() => setSettingsExpanded(p => ({ ...p, trade: !p.trade }))}
+                  className="flex items-center justify-between w-full p-3 sm:p-4"
+                >
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <DollarSign className="h-4 w-4 text-emerald-500" /> Trade Settings
+                  </CardTitle>
+                  {settingsExpanded.trade ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
+                {settingsExpanded.trade && (
+                  <CardContent className="px-3 pb-3 sm:px-4 sm:pb-4 pt-0 space-y-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground">Stake Amount ($)</label>
+                      <div className="flex items-center gap-2">
+                        <Button variant="outline" size="sm" className="h-8 w-8 p-0"
+                          onClick={() => onUpdateConfig({ stake: Math.max(0.35, config.stake - 0.5) })}>
+                          <Minus className="h-3 w-3" />
+                        </Button>
+                        <input
+                          type="number"
+                          value={config.stake}
+                          onChange={e => onUpdateConfig({ stake: Math.max(0.35, parseFloat(e.target.value) || 0.35) })}
+                          className="h-8 rounded border bg-background px-2 text-center text-sm w-20"
+                          step="0.5"
+                          min="0.35"
+                        />
+                        <Button variant="outline" size="sm" className="h-8 w-8 p-0"
+                          onClick={() => onUpdateConfig({ stake: config.stake + 0.5 })}>
+                          <Plus className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground">Target Profit ($)</label>
+                      <input
+                        type="number"
+                        value={config.targetProfit}
+                        onChange={e => onUpdateConfig({ targetProfit: parseFloat(e.target.value) || 5 })}
+                        className="h-8 w-full rounded border bg-background px-2 text-sm"
+                        step="1"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground">Stop Loss ($)</label>
+                      <input
+                        type="number"
+                        value={config.stopLoss}
+                        onChange={e => onUpdateConfig({ stopLoss: parseFloat(e.target.value) || 20 })}
+                        className="h-8 w-full rounded border bg-background px-2 text-sm"
+                        step="1"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-muted-foreground">Duration (ticks)</label>
+                        <input
+                          type="number"
+                          value={config.duration}
+                          onChange={e => onUpdateConfig({ duration: parseInt(e.target.value) || 5 })}
+                          className="h-8 w-full rounded border bg-background px-2 text-sm"
+                          min="1"
+                          max="100"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-muted-foreground">Max Daily Trades</label>
+                        <input
+                          type="number"
+                          value={config.maxDailyTrades}
+                          onChange={e => onUpdateConfig({ maxDailyTrades: parseInt(e.target.value) || 50 })}
+                          className="h-8 w-full rounded border bg-background px-2 text-sm"
+                          min="1"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground">Min Confidence</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min="0.3"
+                          max="0.95"
+                          step="0.05"
+                          value={config.confidenceThreshold}
+                          onChange={e => onUpdateConfig({ confidenceThreshold: parseFloat(e.target.value) })}
+                          className="flex-1"
+                        />
+                        <span className="text-xs font-mono w-12 text-right">{formatPct(config.confidenceThreshold * 100)}</span>
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground">Min Tick Interval (ms)</label>
+                      <input
+                        type="number"
+                        value={config.minTickInterval}
+                        onChange={e => onUpdateConfig({ minTickInterval: parseInt(e.target.value) || 500 })}
+                        className="h-8 w-full rounded border bg-background px-2 text-sm"
+                        min="200"
+                        step="100"
+                      />
+                    </div>
+                  </CardContent>
+                )}
+              </Card>
 
-              <SettingsSection title="Risk Management">
-                <SettingRow label="Target Profit ($)">
-                  <Input type="number" value={config.targetProfit} min={0}
-                    onChange={e => onUpdateConfig({ targetProfit: Number(e.target.value) })} className="w-24 h-8 text-xs" />
-                </SettingRow>
-                <SettingRow label="Stop-Loss ($)">
-                  <Input type="number" value={config.stopLoss} min={1}
-                    onChange={e => onUpdateConfig({ stopLoss: Number(e.target.value) })} className="w-24 h-8 text-xs" />
-                </SettingRow>
-                <SettingRow label="Max Trades/Day">
-                  <Input type="number" value={config.maxTrades} min={1}
-                    onChange={e => onUpdateConfig({ maxTrades: Number(e.target.value) })} className="w-24 h-8 text-xs" />
-                </SettingRow>
-                <SettingRow label="Max Consecutive Losses">
-                  <Input type="number" value={config.maxConsecutiveLosses} min={1}
-                    onChange={e => onUpdateConfig({ maxConsecutiveLosses: Number(e.target.value) })} className="w-24 h-8 text-xs" />
-                </SettingRow>
-                <SettingRow label="Max Daily Loss ($)">
-                  <Input type="number" value={config.maxDailyLoss} min={1}
-                    onChange={e => onUpdateConfig({ maxDailyLoss: Number(e.target.value) })} className="w-24 h-8 text-xs" />
-                </SettingRow>
-                <SettingRow label="Max Daily Profit ($)">
-                  <Input type="number" value={config.maxDailyProfit} min={0}
-                    onChange={e => onUpdateConfig({ maxDailyProfit: Number(e.target.value) })} className="w-24 h-8 text-xs" />
-                </SettingRow>
-              </SettingsSection>
+              <Card className="bg-card/50">
+                <button
+                  onClick={() => setSettingsExpanded(p => ({ ...p, strategy: !p.strategy }))}
+                  className="flex items-center justify-between w-full p-3 sm:p-4"
+                >
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Target className="h-4 w-4 text-purple-500" /> Strategies
+                  </CardTitle>
+                  {settingsExpanded.strategy ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
+                {settingsExpanded.strategy && (
+                  <CardContent className="px-3 pb-3 sm:px-4 sm:pb-4 pt-0 space-y-2">
+                    {STRATEGIES.map(s => (
+                      <div key={s.id} className="flex items-center justify-between p-2 rounded border">
+                        <div>
+                          <div className="text-xs sm:text-sm font-medium">{s.label}</div>
+                          <div className="text-[10px] sm:text-xs text-muted-foreground">{s.desc}</div>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={(config.strategies ?? [s.id]).includes(s.id)}
+                          onChange={() => {
+                            const current = config.strategies ?? [];
+                            const updated = current.includes(s.id)
+                              ? current.filter(x => x !== s.id)
+                              : [...current, s.id];
+                            onUpdateConfig({ strategies: updated.length > 0 ? updated : [s.id] });
+                          }}
+                          className="h-4 w-4 accent-emerald-500"
+                        />
+                      </div>
+                    ))}
+                  </CardContent>
+                )}
+              </Card>
 
-              <SettingsSection title="Signal Generation">
-                <SettingRow label="Min Confidence (%)">
-                  <Input type="number" value={config.minConfidence} min={50} max={95}
-                    onChange={e => onUpdateConfig({ minConfidence: Number(e.target.value) })} className="w-24 h-8 text-xs" />
-                </SettingRow>
-                <SettingRow label="Min Interval Between Trades (ms)">
-                  <Input type="number" value={config.minTickInterval} min={500} step={500}
-                    onChange={e => onUpdateConfig({ minTickInterval: Number(e.target.value) })} className="w-24 h-8 text-xs" />
-                </SettingRow>
-                <SettingRow label="Scan Interval (ms)">
-                  <Input type="number" value={config.scanInterval} min={1000} step={1000}
-                    onChange={e => onUpdateConfig({ scanInterval: Number(e.target.value) })} className="w-24 h-8 text-xs" />
-                </SettingRow>
-              </SettingsSection>
+              <Card className="bg-card/50">
+                <button
+                  onClick={() => setSettingsExpanded(p => ({ ...p, risk: !p.risk }))}
+                  className="flex items-center justify-between w-full p-3 sm:p-4"
+                >
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Shield className="h-4 w-4 text-red-500" /> Risk Management
+                  </CardTitle>
+                  {settingsExpanded.risk ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
+                {settingsExpanded.risk && (
+                  <CardContent className="px-3 pb-3 sm:px-4 sm:pb-4 pt-0 space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-muted-foreground">Max Consecutive Losses</label>
+                        <input
+                          type="number"
+                          value={config.maxConsecutiveLosses}
+                          onChange={e => onUpdateConfig({ maxConsecutiveLosses: parseInt(e.target.value) || 5 })}
+                          className="h-8 w-full rounded border bg-background px-2 text-sm"
+                          min="1"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-muted-foreground">Max Daily Loss ($)</label>
+                        <input
+                          type="number"
+                          value={config.maxDailyLoss}
+                          onChange={e => onUpdateConfig({ maxDailyLoss: parseFloat(e.target.value) || 50 })}
+                          className="h-8 w-full rounded border bg-background px-2 text-sm"
+                          step="5"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground">Max Daily Profit ($)</label>
+                      <input
+                        type="number"
+                        value={config.maxDailyProfit}
+                        onChange={e => onUpdateConfig({ maxDailyProfit: parseFloat(e.target.value) || 100 })}
+                        className="h-8 w-full rounded border bg-background px-2 text-sm"
+                        step="5"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs sm:text-sm">Auto Trade</span>
+                      <input
+                        type="checkbox"
+                        checked={config.autoTrade}
+                        onChange={() => onUpdateConfig({ autoTrade: !config.autoTrade })}
+                        className="h-4 w-4 accent-emerald-500"
+                      />
+                    </div>
+                  </CardContent>
+                )}
+              </Card>
 
-              <SettingsSection title="Over/Under Strategy">
-                <SettingRow label="Enable Over/Under">
-                  <Switch checked={config.overUnderStrategy} onCheckedChange={v => onUpdateConfig({ overUnderStrategy: v })} />
-                </SettingRow>
-                <SettingRow label="Over Threshold">
-                  <Input type="number" value={config.overThreshold} min={0} max={9}
-                    onChange={e => onUpdateConfig({ overThreshold: Number(e.target.value) })} className="w-24 h-8 text-xs" />
-                </SettingRow>
-                <SettingRow label="Under Threshold">
-                  <Input type="number" value={config.underThreshold} min={1} max={9}
-                    onChange={e => onUpdateConfig({ underThreshold: Number(e.target.value) })} className="w-24 h-8 text-xs" />
-                </SettingRow>
-              </SettingsSection>
+              <Card className="bg-card/50">
+                <button
+                  onClick={() => setSettingsExpanded(p => ({ ...p, markets: !p.markets }))}
+                  className="flex items-center justify-between w-full p-3 sm:p-4"
+                >
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Activity className="h-4 w-4 text-cyan-500" /> Markets
+                  </CardTitle>
+                  {settingsExpanded.markets ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
+                {settingsExpanded.markets && (
+                  <CardContent className="px-3 pb-3 sm:px-4 sm:pb-4 pt-0">
+                    <div className="flex flex-wrap gap-1.5">
+                      {ALL_MARKETS.map(m => (
+                        <Badge
+                          key={m.id}
+                          variant={(config.markets ?? ALL_MARKETS.map(x => x.id)).includes(m.id) ? 'default' : 'outline'}
+                          className="cursor-pointer text-[10px] sm:text-xs"
+                          onClick={() => toggleMarket(m.id)}
+                        >
+                          {m.label}
+                        </Badge>
+                      ))}
+                    </div>
+                  </CardContent>
+                )}
+              </Card>
+
+              {emergencyStop && (
+                <Card className="border-red-500/50 bg-red-500/10">
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-2 text-red-500 mb-2">
+                      <AlertTriangle className="h-5 w-5" />
+                      <span className="font-bold">Emergency Stop Active</span>
+                    </div>
+                    <p className="text-xs text-red-400 mb-3">
+                      Bot has been stopped due to consecutive losses or daily loss limit.
+                    </p>
+                    <Button variant="destructive" size="sm" onClick={onResetEmergencyStop}>
+                      <RefreshCw className="h-3.5 w-3.5 mr-1" /> Reset and Continue
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
             </div>
           )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-/* ── Sub-components ── */
-
-function StatCard({ label, value, icon, valueClass }: { label: string; value: React.ReactNode; icon: React.ReactNode; valueClass?: string }) {
-  return (
-    <div className="p-2.5 rounded-lg border border-border bg-card">
-      <div className="flex items-center gap-1.5 mb-1">{icon}<span className="text-[10px] text-muted-foreground">{label}</span></div>
-      <p className={cn("text-lg font-bold", valueClass)}>{value}</p>
-    </div>
-  );
-}
-
-function ActivityRow({ activity }: { activity: BotActivity }) {
-  const iconMap: Record<string, React.ReactNode> = {
-    SCAN: <BarChart3 className="h-3.5 w-3.5" />,
-    ANALYSIS: <Brain className="h-3.5 w-3.5" />,
-    SIGNAL: <Zap className="h-3.5 w-3.5 text-emerald-500" />,
-    TRADE: <TrendingUp className="h-3.5 w-3.5 text-blue-500" />,
-    RESULT: <Activity className="h-3.5 w-3.5" />,
-    ERROR: <XCircle className="h-3.5 w-3.5 text-red-500" />,
-    WARNING: <AlertTriangle className="h-3.5 w-3.5 text-orange-500" />,
-    INFO: <Eye className="h-3.5 w-3.5 text-muted-foreground" />,
-  };
-  return (
-    <div className={cn(
-      "flex items-start gap-2 p-2 rounded-md text-xs",
-      activity.type === 'ERROR' && "bg-red-500/5 border border-red-500/20",
-      activity.type === 'WARNING' && "bg-orange-500/5 border border-orange-500/20",
-      activity.type === 'SIGNAL' && "bg-emerald-500/5 border border-emerald-500/20",
-      activity.type === 'TRADE' && "bg-blue-500/5 border border-blue-500/20",
-    )}>
-      <span className="mt-0.5 shrink-0">{iconMap[activity.type] ?? <Eye className="h-3.5 w-3.5" />}</span>
-      <div className="flex-1 min-w-0">
-        <p className="leading-snug">{activity.message}</p>
-        <p className="text-[10px] text-muted-foreground mt-0.5">{fmt(activity.timestamp)}</p>
-      </div>
-    </div>
-  );
-}
-
-function SignalCard({ signal, onSelect }: { signal: TradeSignal; onSelect: () => void }) {
-  return (
-    <button onClick={onSelect} className="w-full text-left p-3 rounded-lg border border-border hover:bg-muted/50 transition-colors space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Badge className={cn("text-[10px]", signalBadgeClass(signal.signalType))}>{signal.signalType}</Badge>
-          <span className="font-medium text-sm">{signal.symbol}</span>
-          <Badge variant="outline" className="text-[10px]">{signal.contractMode}</Badge>
-        </div>
-        <div className="text-right">
-          <p className="text-sm font-bold">{signal.confidence.toFixed(1)}%</p>
-          <Badge variant="outline" className={cn("text-[10px]", riskBadgeClass(signal.riskLevel))}>{signal.riskLevel}</Badge>
-        </div>
-      </div>
-      <p className="text-xs text-muted-foreground line-clamp-1">{signal.reasonForEntry}</p>
-    </button>
-  );
-}
-
-function SignalDetail({ signal }: { signal: TradeSignal }) {
-  return (
-    <div className="space-y-3">
-      <Card>
-        <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base">{signal.symbol} — {signal.contractMode}</CardTitle>
-            <Badge className={signalBadgeClass(signal.signalType)}>{signal.signalType}</Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          <div className="grid grid-cols-2 gap-2">
-            <InfoRow label="Confidence" value={`${signal.confidence.toFixed(1)}%`} />
-            <InfoRow label="Risk Level" value={signal.riskLevel} />
-            <InfoRow label="Current Tick" value={signal.currentTick.toFixed(2)} />
-            <InfoRow label="Direction" value={signal.direction} />
-            <InfoRow label="Stake" value={`$${signal.recommendedStake.toFixed(2)}`} />
-            <InfoRow label="Time" value={fmtDate(signal.timestamp)} />
-          </div>
-
-          {signal.predictedDigit !== undefined && (
-            <div className="p-2 rounded bg-primary/10 text-center">
-              <span className="text-xs text-muted-foreground">Predicted Digit: </span>
-              <span className="text-lg font-bold text-primary">{signal.predictedDigit}</span>
-            </div>
-          )}
-
-          {signal.recentTicks.length > 0 && (
-            <div>
-              <p className="text-xs font-medium text-muted-foreground mb-1">Recent Ticks</p>
-              <div className="flex gap-1 flex-wrap">
-                {signal.recentTicks.map((t, i) => (
-                  <span key={i} className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">{t.toFixed(2)}</span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {signal.indicators.length > 0 && (
-            <div>
-              <p className="text-xs font-medium text-muted-foreground mb-1">Indicators</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-                {signal.indicators.map((ind, i) => (
-                  <div key={i} className="flex items-center justify-between p-1.5 rounded bg-muted/50 text-xs">
-                    <span className="text-muted-foreground">{ind.name}</span>
-                    <span className={cn("font-medium", ind.bullish ? "text-emerald-500" : "text-muted-foreground")}>{ind.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div>
-            <p className="text-xs font-medium text-muted-foreground mb-1">Reasoning</p>
-            <ul className="space-y-0.5">
-              {signal.reasoning.map((r, i) => (
-                <li key={i} className="text-xs text-muted-foreground">• {r}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="p-2 rounded bg-muted/30 border border-border">
-            <p className="text-xs font-medium mb-0.5">Entry Reason</p>
-            <p className="text-xs text-muted-foreground">{signal.reasonForEntry}</p>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between items-center p-1.5 rounded bg-muted/30">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="text-xs font-medium">{value}</span>
-    </div>
-  );
-}
-
-function SettingsSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-2">
-      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{title}</h3>
-      <div className="space-y-2.5 p-3 rounded-lg border border-border bg-card">
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function SettingRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-4">
-      <Label className="text-xs text-muted-foreground whitespace-nowrap">{label}</Label>
-      {children}
-    </div>
-  );
-}
-
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="text-center py-12 text-muted-foreground">
-      <Zap className="h-8 w-8 mx-auto mb-2 opacity-30" />
-      <p className="text-sm">{message}</p>
+      </ScrollArea>
     </div>
   );
 }

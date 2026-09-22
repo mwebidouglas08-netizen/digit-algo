@@ -267,6 +267,9 @@ export function DigitsView({
                 symbols={symbols}
                 balance={activeAccount ? parseFloat(activeAccount.balance) : 0}
                 isConnected={isConnected}
+                onBuy={handleBuy}
+                stake={parseFloat(stake) || 1}
+                duration={duration}
               />
             )}
             <ThemeToggle />
