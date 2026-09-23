@@ -1,6 +1,6 @@
 // Minimal PWA service worker for Deriv Digits — installable + offline shell
 // Cache version bump to invalidate old caches on deploy
-const CACHE_VERSION = 'v1-2026-09-22';
+const CACHE_VERSION = 'v2-2026-09-23';
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `runtime-${CACHE_VERSION}`;
 
@@ -14,7 +14,9 @@ const PRECACHE_URLS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) => cache.addAll(PRECACHE_URLS)).then(() => self.skipWaiting())
+    caches.open(STATIC_CACHE).then((cache) =>
+      cache.addAll(PRECACHE_URLS).catch(() => cache.add('/'))
+    ).then(() => self.skipWaiting())
   );
 });
 

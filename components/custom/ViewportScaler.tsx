@@ -28,7 +28,10 @@ export default function ViewportScaler({ children }: { children: React.ReactNode
     const naturalHeight = el.scrollHeight;
     el.style.transform = '';
 
-    if (!naturalHeight) return;
+    if (!naturalHeight) {
+      setScale(false);
+      return;
+    }
 
     const newScale = Math.max(MIN_SCALE, Math.min(1, window.innerHeight / naturalHeight));
     setScale(prev => (prev === newScale ? prev : newScale));

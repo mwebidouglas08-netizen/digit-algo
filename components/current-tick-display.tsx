@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { Localize } from '@deriv-com/translations';
 import type { Tick } from '../lib/types';
 import type { ActiveSymbol } from '../lib/types';
@@ -32,13 +33,17 @@ export function CurrentTickDisplay({
   const lastDigitStr = priceStr.slice(-1);
   const pct = digitStats && lastDigit !== null && digitStats.totalTicks > 0 ? digitStats.percentages[lastDigit] : null;
   const confidence = pct !== null ? Math.min(95, Math.max(0, 50 + (pct - 10) * 3 + (pct > 12 ? 10 : 0))) : null;
+  const [timeStr, setTimeStr] = useState('');
+  useEffect(() => {
+    if (tick?.epoch) setTimeStr(new Date(tick.epoch * 1000).toLocaleTimeString());
+  }, [tick?.epoch]);
 
   return (
     <div className="text-center py-2 sm:py-4">
-      <div className="flex items-center justify-center gap-1.5 text-[10px] leading-none mb-1">
+      <div className="flex items-center justify-center gap-1.5 text-[10px] leading-none mb-1" suppressHydrationWarning>
         <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
         <span className="font-medium tracking-widest text-emerald-600">LIVE TICK</span>
-        <span className="text-muted-foreground">• {tick.epoch ? new Date(tick.epoch * 1000).toLocaleTimeString() : ''}</span>
+        <span className="text-muted-foreground" suppressHydrationWarning>• {timeStr}</span>
       </div>
       <div className="text-xl sm:text-3xl font-mono font-bold tracking-wide">
         <span className="text-foreground">{priceWithoutLast}</span>

@@ -10,11 +10,10 @@ export default function manifest(): MetadataRoute.Manifest | any {
     start_url: '/',
     scope: '/',
     display: 'standalone',
-    display_override: ['window-controls-overlay', 'standalone', 'browser'],
-    orientation: 'any',
+    orientation: 'portrait',
     background_color: '#ffffff',
     theme_color: '#FF444F',
-    categories: ['finance', 'trading'],
+    categories: ['finance'],
     icons: [
       {
         src: '/icon-192.png',
@@ -49,12 +48,10 @@ export default function manifest(): MetadataRoute.Manifest | any {
     ],
     shortcuts: [
       {
-        name: 'Start AI Bot',
-        url: '/?autostart=1',
-        description: 'Open and start the AI trading bot',
+        name: 'AI Bot',
+        url: '/',
+        description: 'Open AI trading bot',
       },
     ],
-    screenshots: [],
-    prefer_related_applications: false,
   };
 }
