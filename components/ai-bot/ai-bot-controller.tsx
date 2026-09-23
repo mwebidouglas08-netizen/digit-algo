@@ -123,7 +123,7 @@ export function AIBotController({
       // autoBuy errors surface via Deriv toast; keep loop alive
     }
 
-    setTimeout(() => { buyCooldownRef.current = false; }, 1500);
+    setTimeout(() => { buyCooldownRef.current = false; }, 1000);
   }, [autoBuy, config.stake, config.duration, isConnected, isRiskAcceptable, balance]);
 
   // Periodic AI validation: backtest + OOS + health check every ~90s while running — keeps strategies effective as market changes

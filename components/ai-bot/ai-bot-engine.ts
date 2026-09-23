@@ -188,14 +188,14 @@ const DEFAULT_CONFIG: BotConfig = {
   stopLoss: 50,
   maxTrades: 200,
   maxDailyTrades: 200,
-  minConfidence: 80,
-  confidenceThreshold: 80,
-  minTickInterval: 1200,
+  minConfidence: 78,
+  confidenceThreshold: 78,
+  minTickInterval: 900,
   maxConsecutiveLosses: 4,
   maxDailyLoss: 50,
   maxDailyProfit: 200,
   duration: 1,
-  scanInterval: 1500,
+  scanInterval: 1000,
   symbols: [],
   markets: [],
   tradeTypes: ['DIGITDIFF', 'DIGITMATCH', 'DIGITOVER', 'DIGITUNDER', 'DIGITEVEN', 'DIGITODD'],
@@ -208,7 +208,7 @@ const DEFAULT_CONFIG: BotConfig = {
   evenOddEnabled: false,
   evenStreakEnabled: false,
   oddStreakEnabled: false,
-  over3Under6Enabled: true,
+  over3Under6Enabled: false,
   streakLength: 3,
   splitMartingaleEnabled: false,
   splitFactor: 1,
@@ -343,8 +343,10 @@ export class AIBotEngine {
 
   isRiskAcceptable(signal: TradeSignal, balance: number): { ok: boolean; reason?: string } {
     const stake = Math.min(signal.recommendedStake, this.config.stake, balance * 0.1);
-    if (balance > 0 && stake / balance > 0.05) {
-      const r = `Risk too high: stake $${stake.toFixed(2)} >5% of balance $${balance.toFixed(2)}`;
+    // Allow up to 10% for small balances (e.g., $0.70 on $10 = 7%) — block only if >10% or >$5 on large accounts
+    const riskPct = balance > 0 ? stake / balance : 0;
+    if (balance > 0 && riskPct > 0.10) {
+      const r = `Risk too high: stake $${stake.toFixed(2)} >10% of balance $${balance.toFixed(2)}`;
       this.addActivity({ type: 'INFO', message: `Blocked ${signal.contractMode} ${signal.confidence.toFixed(0)}%: ${r}` });
       return { ok: false, reason: r };
     }
