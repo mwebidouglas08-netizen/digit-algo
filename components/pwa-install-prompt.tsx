@@ -35,9 +35,16 @@ export function PwaInstallPrompt() {
   if (isStandalone || dismissed) return null;
 
   // Android/Desktop Chrome — show install button when prompt available
+  // Auto-dismiss after 12s so it never permanently covers mobile controls
+  useEffect(() => {
+    if (!deferred && !isIOS) return;
+    const t = setTimeout(() => setDismissed(true), 12000);
+    return () => clearTimeout(t);
+  }, [deferred, isIOS]);
+
   if (deferred) {
     return (
-      <Card className="fixed bottom-4 left-3 right-3 z-50 border-emerald-500/30 bg-background shadow-xl sm:left-auto sm:right-4 sm:max-w-sm">
+      <Card className="fixed top-[68px] left-3 right-3 z-40 border-emerald-500/30 bg-background shadow-xl sm:left-auto sm:right-4 sm:max-w-sm">
         <CardContent className="flex items-center gap-3 p-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500 text-white">
             <Download className="h-5 w-5" />
@@ -67,9 +74,9 @@ export function PwaInstallPrompt() {
 
   // iOS — show manual Add to Home Screen hint (no prompt event)
   if (isIOS) {
-    // Only show once per session, dismissible
+    // Only show once per session, dismissible, top so it doesn't cover Buy button
     return (
-      <Card className="fixed bottom-4 left-3 right-3 z-50 border-blue-500/30 bg-background shadow-xl sm:left-auto sm:right-4 sm:max-w-sm">
+      <Card className="fixed top-[68px] left-3 right-3 z-40 border-blue-500/30 bg-background shadow-xl sm:left-auto sm:right-4 sm:max-w-sm">
         <CardContent className="flex items-start gap-3 p-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500 text-white">
             <Share className="h-5 w-5" />

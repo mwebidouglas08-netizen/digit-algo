@@ -482,6 +482,7 @@ export function DigitsView({
                         lastDigit={lastDigit}
                         activeSymbol={activeSymbol}
                         pipSize={pipSize}
+                        digitStats={digitStats}
                       />
                     </div>
                   </div>
@@ -555,6 +556,7 @@ export function DigitsView({
                       lastDigit={lastDigit}
                       activeSymbol={activeSymbol}
                       pipSize={pipSize}
+                      digitStats={digitStats}
                     />
                   </div>
                   {/* Digit stats — hidden for Even/Odd */}

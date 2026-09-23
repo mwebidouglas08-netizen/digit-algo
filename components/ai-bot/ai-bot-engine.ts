@@ -188,8 +188,8 @@ const DEFAULT_CONFIG: BotConfig = {
   stopLoss: 50,
   maxTrades: 200,
   maxDailyTrades: 200,
-  minConfidence: 78,
-  confidenceThreshold: 78,
+  minConfidence: 85,
+  confidenceThreshold: 85,
   minTickInterval: 900,
   maxConsecutiveLosses: 4,
   maxDailyLoss: 50,
@@ -693,11 +693,13 @@ export class AIBotEngine {
     const lowCount = recentDigits.filter(d => d <= 2).length;
     const veryLowCount = recentDigits.filter(d => d <= 1).length;
 
-    let confidence = 78;
+    let confidence = 0;
+    // Profit-only: require strong confirmation — at least 3 of last 10 ≤2 AND last2 ≤2
     if (veryLowCount >= 2 && lowCount >= 4) confidence = 92;
     else if (veryLowCount >= 2 && lowCount >= 3) confidence = 88;
-    else if (lastDigit <= 1 && secondLastDigit <= 1) confidence = 88;
-    else if (lastDigit <= 2 && secondLastDigit <= 2) confidence = 82;
+    else if (lastDigit <= 1 && secondLastDigit <= 1 && lowCount >= 3) confidence = 88;
+    else if (lastDigit <= 2 && secondLastDigit <= 2 && lowCount >= 3) confidence = 85;
+    else return null;
 
     const stake = this.getEffectiveStake();
     const recentTicks = history.slice(-10);
@@ -753,13 +755,13 @@ export class AIBotEngine {
     // Do NOT block at 15% (expected is 20%), only block extreme >27% where distribution is blown out
     if (combinedPct >= 27) return null;
 
-    let confidence = 78;
-    // Verified tiers — more permissive to actually generate signals, accuracy via recent high run + pip-correct stats
+    let confidence = 0;
+    // Profit-only: require strong high run + pip-correct stats — no weak 80% signals
     if (veryHighCount >= 2 && highCount >= 4 && combinedPct < 18) confidence = 93;
     else if (veryHighCount >= 2 && highCount >= 3 && combinedPct < 20) confidence = 88;
-    else if (lastDigit >= 8 && secondLastDigit >= 8 && combinedPct < 18) confidence = 85;
-    else if (lastDigit >= 7 && secondLastDigit >= 7) confidence = 82;
-    else confidence = 80;
+    else if (lastDigit >= 8 && secondLastDigit >= 8 && combinedPct < 18) confidence = 88;
+    else if (lastDigit >= 7 && secondLastDigit >= 7 && highCount >= 3) confidence = 85;
+    else return null;
 
     const stake = this.getEffectiveStake();
     const recentTicks = history.slice(-10);

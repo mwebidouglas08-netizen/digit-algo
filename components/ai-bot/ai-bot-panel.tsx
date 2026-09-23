@@ -202,7 +202,7 @@ export function AIBotPanel({
                 <CardContent className="p-2.5 flex items-start gap-2">
                   <Shield className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
                   <p className="text-[11px] leading-snug text-muted-foreground">
-                    <span className="font-semibold text-amber-600">Production mode:</span> Uses <span className="font-medium">real Deriv ticks</span> and your Settings (stake ${config.stake.toFixed(2)} • duration {config.duration} tick • min confidence {Math.round(config.confidenceThreshold*100)}%). No digit strategy can guarantee profit — digits are pseudo-random. Bot trades <span className="font-medium">only high-confidence</span> Assured setups (Over 2 / Under 8 ≥75%) and pauses on {config.maxConsecutiveLosses} consecutive losses or ${config.maxDailyLoss} daily loss. Expect wins <em>and</em> losses.
+                    <span className="font-semibold text-amber-600">Production mode:</span> Uses <span className="font-medium">real Deriv ticks</span> and your Settings (stake ${config.stake.toFixed(2)} • duration {config.duration} tick • min confidence {Math.round(config.confidenceThreshold*100)}%). No digit strategy can guarantee profit — digits are pseudo-random. Bot trades <span className="font-medium">only high-confidence</span> Assured Over 2 / Under 8 (≥85% + 3/10 confirmation) and pauses on {config.maxConsecutiveLosses} consecutive losses or ${config.maxDailyLoss} daily loss. Expect wins <em>and</em> losses.
                   </p>
                 </CardContent>
               </Card>
