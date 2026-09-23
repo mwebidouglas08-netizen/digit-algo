@@ -53,7 +53,7 @@ export function AIBotController({
   const {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
     lastAnalysis, emergencyStop, validation,
-    startBot, stopBot, updateConfig, processTick, checkRules, checkEvenOdd, checkOver3Under6, peekOver2, peekUnder8, ingestTick, prepareTrade,
+    startBot, stopBot, updateConfig, processTick, checkRules, checkEvenOdd, checkOver3Under6, peekOver2, peekUnder8, peekOver2Silent, peekUnder8Silent, peekEvenOddSilent, peekOver3Under6Silent, ingestTick, prepareTrade,
     recordTradeResult, triggerEmergencyStop, resetEmergencyStop,
     isRiskAcceptable, runValidation, runBacktest, getDrawdown, runPeriodicValidation, getStrategyHealth,
   } = useAIBot();
@@ -161,7 +161,7 @@ export function AIBotController({
     const over3Under6Signal = checkOver3Under6(symbol, stats);
     let candidates = [sig, ruleSignal, evenOddSignal, over3Under6Signal].filter(Boolean) as (typeof sig)[];
 
-    // Comprehensive scan: evaluate Over2/Under8 on EVERY volatility market with real ticks — ensures no opportunity missed
+    // Comprehensive scan: evaluate Over2/Under8 on EVERY volatility market with real ticks — silent peek (no sync flood) to keep mobile smooth
     for (const sym of symbols) {
       if (sym.underlying_symbol === symbol) continue; // already evaluated as active
       const t = allTicksRef.current.get(sym.underlying_symbol) ?? [];
@@ -171,14 +171,14 @@ export function AIBotController({
       if (sStats.totalTicks < 20) continue;
       const last = getLastDigit(t[t.length - 1], ps);
       const prev = getLastDigit(t[t.length - 2], ps);
-      const o2 = peekOver2(sym.underlying_symbol, last, prev, sStats);
+      const o2 = peekOver2Silent(sym.underlying_symbol, last, prev, sStats);
       if (o2) candidates.push(o2);
-      const u8 = peekUnder8(sym.underlying_symbol, last, prev, sStats);
+      const u8 = peekUnder8Silent(sym.underlying_symbol, last, prev, sStats);
       if (u8) candidates.push(u8);
-      // Even/Odd and Over3/Under6 also scanned if enabled
-      const eo = checkEvenOdd(sym.underlying_symbol, sStats);
+      // Even/Odd and Over3/Under6 also scanned if enabled — silent to avoid mobile jank
+      const eo = peekEvenOddSilent(sym.underlying_symbol, sStats);
       if (eo) candidates.push(eo);
-      const o3 = checkOver3Under6(sym.underlying_symbol, sStats);
+      const o3 = peekOver3Under6Silent(sym.underlying_symbol, sStats);
       if (o3) candidates.push(o3);
     }
     // AI decision: select highest-confidence validated signal across ALL markets — never force when none meet threshold
@@ -202,7 +202,7 @@ export function AIBotController({
         }
       }
     }
-  }, [isRunning, currentTick, activeSymbol, digitStats, pipSize, symbols, processTick, checkRules, checkEvenOdd, checkOver3Under6, peekOver2, peekUnder8, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy, isRiskAcceptable, selectSymbol]);
+  }, [isRunning, currentTick, activeSymbol, digitStats, pipSize, symbols, processTick, checkRules, checkEvenOdd, checkOver3Under6, peekOver2, peekUnder8, peekOver2Silent, peekUnder8Silent, peekEvenOddSilent, peekOver3Under6Silent, prepareTrade, balance, config.autoTrade, emergencyStop, executeAutoBuy, isRiskAcceptable, selectSymbol]);
 
   // Multi-market scan: every scanInterval, look at REAL digit distribution across all
   // subscribed markets and auto-switch to the market with strongest edge.

@@ -35,6 +35,10 @@ interface UseAIBotReturn {
   checkOver3Under6: (symbol: string, digitStats: DigitStats) => TradeSignal | null;
   peekOver2: (symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats) => TradeSignal | null;
   peekUnder8: (symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats) => TradeSignal | null;
+  peekOver2Silent: (symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats) => TradeSignal | null;
+  peekUnder8Silent: (symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats) => TradeSignal | null;
+  peekEvenOddSilent: (symbol: string, digitStats: DigitStats) => TradeSignal | null;
+  peekOver3Under6Silent: (symbol: string, digitStats: DigitStats) => TradeSignal | null;
   ingestTick: (symbol: string, price: number, pipSize?: number) => void;
   prepareTrade: (signal: TradeSignal, balance: number) => { stake: number; willTrade: boolean; reason?: string };
   recordTradeResult: (tradeId: string, result: 'WIN' | 'LOSS', profit: number) => void;
@@ -201,6 +205,23 @@ export function useAIBot(): UseAIBotReturn {
     if (sig) syncState();
     return sig;
   }, [isRunning, syncState]);
+  // Silent peek — no syncState, for scanning other markets without flooding re-renders (prevents mobile jank)
+  const peekOver2Silent = useCallback((symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats): TradeSignal | null => {
+    if (!engineRef.current || !isRunning) return null;
+    return engineRef.current.checkOver2Rule(symbol, lastDigit, secondLastDigit, digitStats);
+  }, [isRunning]);
+  const peekUnder8Silent = useCallback((symbol: string, lastDigit: number, secondLastDigit: number, digitStats: DigitStats): TradeSignal | null => {
+    if (!engineRef.current || !isRunning) return null;
+    return engineRef.current.checkUnder8Rule(symbol, lastDigit, secondLastDigit, digitStats);
+  }, [isRunning]);
+  const peekEvenOddSilent = useCallback((symbol: string, digitStats: DigitStats): TradeSignal | null => {
+    if (!engineRef.current || !isRunning) return null;
+    return engineRef.current.checkEvenOddStreak(symbol, digitStats);
+  }, [isRunning]);
+  const peekOver3Under6Silent = useCallback((symbol: string, digitStats: DigitStats): TradeSignal | null => {
+    if (!engineRef.current || !isRunning) return null;
+    return engineRef.current.checkOver3Under6(symbol, digitStats);
+  }, [isRunning]);
 
   const ingestTick = useCallback((symbol: string, price: number, pipSize: number = 2) => {
     if (!engineRef.current) return;
@@ -290,7 +311,7 @@ export function useAIBot(): UseAIBotReturn {
   return {
     isRunning, config, activities, signals, tradeHistory, dailyStats,
     lastAnalysis, emergencyStop, validation,
-    startBot, stopBot, updateConfig, processTick, checkRules, checkEvenOdd, checkOver3Under6, peekOver2, peekUnder8, ingestTick, prepareTrade,
+    startBot, stopBot, updateConfig, processTick, checkRules, checkEvenOdd, checkOver3Under6, peekOver2, peekUnder8, peekOver2Silent, peekUnder8Silent, peekEvenOddSilent, peekOver3Under6Silent, ingestTick, prepareTrade,
     recordTradeResult, triggerEmergencyStop, resetEmergencyStop,
     clearActivities, clearSignals,
     verifyExpectedProfit, isRiskAcceptable, runBacktest, runValidation, getLastValidation, getDrawdown,

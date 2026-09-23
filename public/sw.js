@@ -1,6 +1,6 @@
 // Minimal PWA service worker for Deriv Digits — installable + offline shell
-// Cache version bump to invalidate old caches on deploy — v4 fixes mobile blank page (precache 404)
-const CACHE_VERSION = 'v4-2026-09-23';
+// Cache version bump to invalidate old caches — v5 fixes PWA "page couldn't load" (no '/' precache, no 404 fallback)
+const CACHE_VERSION = 'v5-2026-09-23';
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `runtime-${CACHE_VERSION}`;
 
@@ -45,16 +45,19 @@ self.addEventListener('fetch', (event) => {
   if (url.hostname.includes('deriv.')) return;
   if (url.pathname.startsWith('/api/')) return;
 
-  // Navigation requests: network first, fallback to cache
+  // Navigation requests: network first, fallback to cache (never fallback to '/' which may be 404)
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(RUNTIME_CACHE).then((c) => c.put(req, copy));
+          // Only cache successful HTML navigations
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(RUNTIME_CACHE).then((c) => c.put(req, copy));
+          }
           return res;
         })
-        .catch(() => caches.match(req).then((cached) => cached || caches.match('/')))
+        .catch(() => caches.match(req).then((cached) => cached || new Response('<h1>Offline</h1><p>Connect to internet to load Daggy.</p>', { headers: { 'Content-Type': 'text/html' } })))
     );
     return;
   }
