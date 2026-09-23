@@ -43,6 +43,9 @@ export default function ViewportScaler({ children }: { children: React.ReactNode
   useLayoutEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     updateScale();
+    // Fallback: if measurement never completes (e.g., hidden by parent overflow), force visible after 500ms
+    const t = setTimeout(() => setScale((s) => (s === null ? false : s)), 500);
+    return () => clearTimeout(t);
   }, []);
 
   // React to content height changes (fonts loading, dynamic data, images)
