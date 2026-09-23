@@ -1,15 +1,17 @@
 // Minimal PWA service worker for Deriv Digits — installable + offline shell
-// Cache version bump to invalidate old caches on deploy
-const CACHE_VERSION = 'v3-2026-09-23';
+// Cache version bump to invalidate old caches on deploy — v4 fixes mobile blank page (precache 404)
+const CACHE_VERSION = 'v4-2026-09-23';
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `runtime-${CACHE_VERSION}`;
 
-// Precache the app shell (add more if needed)
+// Precache only icons — never precache '/' (avoids caching a 404 shell)
 const PRECACHE_URLS = [
-  '/',
   '/icon-192.png',
   '/icon-512.png',
+  '/icon-192-maskable.png',
+  '/icon-512-maskable.png',
   '/icon.svg',
+  '/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (event) => {
