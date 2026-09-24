@@ -20,6 +20,11 @@ export function CurrentTickDisplay({
   pipSize,
   digitStats,
 }: CurrentTickDisplayProps) {
+  const [timeStr, setTimeStr] = useState('');
+  useEffect(() => {
+    if (tick?.epoch) setTimeStr(new Date(tick.epoch * 1000).toLocaleTimeString());
+  }, [tick?.epoch]);
+
   if (!tick || !activeSymbol) {
     return (
       <div className="text-center py-3 sm:py-6">
@@ -33,10 +38,6 @@ export function CurrentTickDisplay({
   const lastDigitStr = priceStr.slice(-1);
   const pct = digitStats && lastDigit !== null && digitStats.totalTicks > 0 ? digitStats.percentages[lastDigit] : null;
   const confidence = pct !== null ? Math.min(95, Math.max(0, 50 + (pct - 10) * 3 + (pct > 12 ? 10 : 0))) : null;
-  const [timeStr, setTimeStr] = useState('');
-  useEffect(() => {
-    if (tick?.epoch) setTimeStr(new Date(tick.epoch * 1000).toLocaleTimeString());
-  }, [tick?.epoch]);
 
   return (
     <div className="text-center py-2 sm:py-4">
