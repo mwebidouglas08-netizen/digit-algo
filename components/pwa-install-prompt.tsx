@@ -32,15 +32,15 @@ export function PwaInstallPrompt() {
     };
   }, []);
 
-  if (isStandalone || dismissed) return null;
-
-  // Android/Desktop Chrome — show install button when prompt available
-  // Auto-dismiss after 12s so it never permanently covers mobile controls
+  // Auto-dismiss after 12s so it never permanently covers mobile controls — must be before early return (Rules of Hooks)
   useEffect(() => {
+    if (isStandalone || dismissed) return;
     if (!deferred && !isIOS) return;
     const t = setTimeout(() => setDismissed(true), 12000);
     return () => clearTimeout(t);
-  }, [deferred, isIOS]);
+  }, [deferred, isIOS, isStandalone, dismissed]);
+
+  if (isStandalone || dismissed) return null;
 
   if (deferred) {
     return (
