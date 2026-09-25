@@ -1,6 +1,6 @@
-// Minimal PWA SW — does NOT intercept navigations, just enables installability
-// v6 fixes "This page couldn't load" in Edge PWA (no fetch handler for navigate)
-const CACHE_VERSION = 'v6-2026-09-23';
+// Minimal PWA SW — network-first for everything, never serve stale 404
+// v7 fixes "App failed to load" React #300 by ensuring fresh JS on every PWA open
+const CACHE_VERSION = 'v7-2026-09-23';
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 
 self.addEventListener('install', (event) => {
@@ -23,8 +23,25 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// No fetch handler — let browser handle all fetches natively (prevents PWA offline 404)
-// This ensures https://digit-algo.vercel.app/ always loads from network in PWA window
+// Network-first for ALL — ensures PWA never serves stale JS that caused React #300
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.protocol === 'chrome-extension:' || url.hostname.includes('deriv.')) return;
+  event.respondWith(
+    fetch(req)
+      .then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(STATIC_CACHE).then((c) => c.put(req, copy)).catch(() => null);
+        }
+        return res;
+      })
+      .catch(() => caches.match(req).then((c) => c || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } })))
+  );
+});
+
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
